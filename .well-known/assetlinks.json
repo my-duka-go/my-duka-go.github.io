@@ -1,8 +1,8 @@
 [{
-  "relation": ["delegate_permission/common.handle_all_urls"],
-  "target": {
-    "namespace": "android_app",
-    "package_name": "io.github.muturifrancis25_dev.twa",
-    "sha256_cert_fingerprints": ["52:3F:56:F9:03:6C:F9:B7:91:F7:93:57:0C:3F:37:55:CF:EE:25:E6:C6:22:2F:CE:63:2F:9B:39:02:9D:DB:F4"]
-  }
-}]
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "io.github.muturifrancis25_dev.twa",
+        "sha256_cert_fingerprints": ["73:D0:25:CB:70:81:E0:29:DF:A8:42:6C:6A:E0:D5:4C:48:89:F8:13:B9:0D:56:F2:0B:86:BC:33:E1:1D:1B:89"]
+      }
+    }]
