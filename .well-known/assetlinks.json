@@ -1,8 +1,26 @@
-[{
-      "relation": ["delegate_permission/common.handle_all_urls"],
-      "target": {
-        "namespace": "android_app",
-        "package_name": "io.github.muturifrancis25_dev.twa",
-        "sha256_cert_fingerprints": ["73:D0:25:CB:70:81:E0:29:DF:A8:42:6C:6A:E0:D5:4C:48:89:F8:13:B9:0D:56:F2:0B:86:BC:33:E1:1D:1B:89"]
-      }
-    }]
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "io.github.my_duka_go.pos",
+      "sha256_cert_fingerprints": ["06:6C:E0:6B:28:E3:F2:22:98:72:81:0D:99:01:DB:68:8E:B3:0D:78:39:15:BC:99:52:F8:6E:51:3E:70:09:87"]
+    }
+  },
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "io.github.my_duka_go.cln",
+      "sha256_cert_fingerprints": ["EC:82:2F:1A:18:48:90:0D:47:40:88:B4:BF:A9:4E:E3:CA:E0:78:E1:95:11:1E:34:40:8A:0B:08:78:0F:97:5C"]
+    }
+  },
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "io.github.muturifrancis25_dev.twa",
+      "sha256_cert_fingerprints": ["73:D0:25:CB:70:81:E0:29:DF:A8:42:6C:6A:E0:D5:4C:48:89:F8:13:B9:0D:56:F2:0B:86:BC:33:E1:1D:1B:89"]
+    }
+  }
+]
