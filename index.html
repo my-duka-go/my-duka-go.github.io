@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DukaGO</title>
+<meta name="description" content="My DukaGO POS and Clinic on the Go - a till for every shop and a hospital system for every clinic, on any phone, tablet or computer, online or offline.">
+<style>
+  :root { --bg:#0e1512; --card:#18221e; --line:#26332d; --text:#eef5f1; --muted:#a9b8b0; --accent:#e8a33d; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f6f8f7; --card:#ffffff; --line:#dfe6e2; --text:#13201a; --muted:#56655e; } }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; display:flex; flex-direction:column; align-items:center; padding:48px 16px; }
+  h1 { font-size:34px; margin:0 0 8px; letter-spacing:-.5px; }
+  p.lead { margin:0 0 32px; color:var(--muted); max-width:560px; text-align:center; }
+  .apps { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:20px; width:100%; max-width:720px; }
+  a.app { display:flex; gap:16px; align-items:center; padding:20px; border:1px solid var(--line); border-radius:16px; background:var(--card); color:inherit; text-decoration:none; transition:border-color .15s, transform .15s; }
+  a.app:hover, a.app:focus-visible { border-color:var(--accent); transform:translateY(-2px); outline:none; }
+  a.app img { width:64px; height:64px; border-radius:14px; flex:0 0 auto; }
+  a.app b { display:block; font-size:18px; }
+  a.app span { color:var(--muted); font-size:14px; }
+  footer { margin-top:auto; padding-top:40px; color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+  <h1>DukaGO</h1>
+  <p class="lead">A till for every shop and a hospital system for every clinic - on any phone, tablet or computer, online or offline.</p>
+  <div class="apps">
+    <a class="app" href="/my-dukago-pos/"><img src="/my-dukago-pos/icons/icon-192-v4.png" alt=""><div><b>My DukaGO POS</b><span>Sell, take M-Pesa, manage stock and see the day's money</span></div></a>
+    <a class="app" href="/clinic-on-the-go/"><img src="/clinic-on-the-go/icons/icon-192-c1.png" alt=""><div><b>Clinic on the Go</b><span>Reception to cashier - patients, lab, pharmacy and MOH reports</span></div></a>
+  </div>
+  <footer>&copy; 2026 DukaGO</footer>
+</body>
+</html>
