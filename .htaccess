@@ -1,0 +1,7 @@
+Options -Indexes
+<IfModule mod_headers.c>
+  <FilesMatch "(sw\.js|index\.html|manifest\.json)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+  Header always set X-Content-Type-Options "nosniff"
+</IfModule>
