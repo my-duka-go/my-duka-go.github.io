@@ -1,0 +1,101 @@
+<!-- ===== Farm on the Go - paste this where you want the section on www.mydukago.co.ke =====
+     The pictures load from app.mydukago.co.ke - nothing to upload.
+     Everything is scoped to .fotg so it does not change the rest of your website. -->
+<section class="fotg" id="farm-on-the-go">
+<style>
+.fotg{--g:#1f9a5f;--gd:#10241a;--a:#e8a33d;--t:#13211a;--m:#56655e;--l:#dfe6e2;--bg:#f3f7f4;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--t);background:var(--bg);padding:56px 16px;line-height:1.55}
+.fotg *{box-sizing:border-box}
+.fotg .w{max-width:1100px;margin:0 auto}
+.fotg .hd{display:flex;gap:16px;align-items:center;margin-bottom:10px}
+.fotg .hd img{width:60px;height:60px;border-radius:16px;flex:0 0 auto}
+.fotg h2{font-size:clamp(26px,4vw,38px);margin:0;letter-spacing:-.5px;line-height:1.15}
+.fotg .lead{font-size:18px;color:var(--m);max-width:720px;margin:6px 0 22px}
+.fotg .cta{display:inline-block;background:var(--g);color:#fff;font-weight:700;padding:13px 22px;border-radius:12px;text-decoration:none;margin:0 10px 10px 0}
+.fotg .cta.alt{background:#fff;color:var(--t);border:1px solid var(--l)}
+.fotg .tags{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 34px}
+.fotg .tags span{background:#fff;border:1px solid var(--l);border-radius:999px;padding:5px 12px;font-size:14px;color:var(--m)}
+.fotg .side{display:grid;grid-template-columns:1fr 1fr;gap:28px;align-items:center;margin:44px 0}
+.fotg .side.rev .txt{order:2}
+.fotg .who{display:inline-block;font-size:13px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--g);margin-bottom:6px}
+.fotg h3{font-size:clamp(21px,3vw,28px);margin:0 0 12px;line-height:1.2}
+.fotg ul{list-style:none;padding:0;margin:0}
+.fotg li{position:relative;padding:0 0 10px 30px}
+.fotg li:before{content:"✓";position:absolute;left:0;top:0;width:21px;height:21px;border-radius:50%;background:#dff3e8;color:var(--g);font-weight:800;font-size:13px;display:grid;place-items:center}
+.fotg li b{color:var(--t)}
+.fotg .shots{display:flex;gap:14px;justify-content:center}
+.fotg .shots img{width:46%;max-width:250px;border-radius:22px;border:6px solid var(--gd);box-shadow:0 14px 34px rgba(16,36,26,.22);display:block}
+.fotg .shots img:nth-child(2){margin-top:34px}
+.fotg .crops{background:#fff;border:1px solid var(--l);border-radius:18px;padding:22px;margin:40px 0 10px}
+.fotg .crops p{margin:0 0 10px;color:var(--m)}
+.fotg .crops div{display:flex;flex-wrap:wrap;gap:8px}
+.fotg .crops div span{background:var(--bg);border-radius:10px;padding:6px 11px;font-size:14.5px}
+.fotg .three{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:30px}
+.fotg .three div{background:#fff;border:1px solid var(--l);border-radius:16px;padding:18px}
+.fotg .three b{display:block;font-size:17px;margin-bottom:4px}
+.fotg .three span{color:var(--m);font-size:15px}
+.fotg .small{font-size:13px;color:var(--m);margin-top:22px}
+@media (max-width:760px){.fotg .side{grid-template-columns:1fr}.fotg .side.rev .txt{order:0}.fotg .three{grid-template-columns:1fr}}
+</style>
+<div class="w">
+  <div class="hd"><img src="https://app.mydukago.co.ke/farm-on-the-go/site/farm-icon.png" alt="Farm on the Go"><h2>Farm on the Go</h2></div>
+  <p class="lead">The farm book in your pocket. Know what to do on your farm each day, keep records, and see what each crop really earns. Nurseries can see their seedling stock and handle farmers' orders. Works on any phone, even with no internet.</p>
+  <a class="cta" href="https://app.mydukago.co.ke/farm-on-the-go/">Open Farm on the Go</a>
+  <a class="cta alt" href="#fotg-farmers">See how it works</a>
+  <div class="tags"><span>Works offline</span><span>Any Android or iPhone</span><span>16 Kenyan crops</span><span>Cash, M-Pesa &amp; credit sales</span><span>WhatsApp sharing</span></div>
+
+  <div class="side" id="fotg-farmers">
+    <div class="txt">
+      <span class="who">For farmers</span>
+      <h3>Every crop gets its own calendar</h3>
+      <ul>
+        <li><b>Planting to harvest:</b> enter the crop and the planting date - the app shows the growth stage and when the harvest starts.</li>
+        <li><b>Daily jobs:</b> feeding, spray programmes, scouting, staking and weeding, with reminders.</li>
+        <li><b>Safe harvest:</b> warns you not to harvest until the spray's waiting period is over.</li>
+        <li><b>Seedling orders:</b> tells you when the seedlings you ordered are ready to plant.</li>
+      </ul>
+    </div>
+    <div class="shots"><img src="https://app.mydukago.co.ke/farm-on-the-go/site/farm-today.jpg" alt="Farm on the Go - today's farm jobs"><img src="https://app.mydukago.co.ke/farm-on-the-go/site/farm-crop-calendar.jpg" alt="Farm on the Go - tomato crop calendar"></div>
+  </div>
+
+  <div class="side rev">
+    <div class="txt">
+      <span class="who">Records, sales and profit</span>
+      <h3>See what each crop really earns</h3>
+      <ul>
+        <li><b>Records:</b> sprays, fertiliser and labour, with what each one cost.</li>
+        <li><b>Sales:</b> harvests and sales by cash, M-Pesa or credit, with a list of who owes you.</li>
+        <li><b>Profit and loss:</b> for each planting and for the whole farm, by month.</li>
+        <li><b>Plant doctor:</b> take a photo of a sick plant, tick what you see, and get the likely problem and what to do.</li>
+      </ul>
+    </div>
+    <div class="shots"><img src="https://app.mydukago.co.ke/farm-on-the-go/site/farm-money.jpg" alt="Farm on the Go - profit and loss"><img src="https://app.mydukago.co.ke/farm-on-the-go/site/farm-plant-doctor.jpg" alt="Farm on the Go - plant doctor"></div>
+  </div>
+
+  <div class="side">
+    <div class="txt">
+      <span class="who">For propagators and nurseries</span>
+      <h3>Know what is ready, what is coming and what is sold</h3>
+      <ul>
+        <li><b>Batches:</b> enter the crop, sowing date and trays - the app works out when the seedlings will be ready.</li>
+        <li><b>Live stock:</b> see what is ready now, ready soon, still growing, booked or sold out.</li>
+        <li><b>Orders:</b> accept a farmer's order or mark it not available, then reply on WhatsApp or SMS in one tap.</li>
+        <li><b>Share stock:</b> send your stock list to farmers' WhatsApp groups.</li>
+      </ul>
+    </div>
+    <div class="shots"><img src="https://app.mydukago.co.ke/farm-on-the-go/site/nursery-today.jpg" alt="Farm on the Go - nursery orders to answer"><img src="https://app.mydukago.co.ke/farm-on-the-go/site/nursery-seedlings.jpg" alt="Farm on the Go - seedling stock"></div>
+  </div>
+
+  <div class="crops">
+    <p><b>Built around how Kenyan crops grow</b> - each crop comes with its stages, spacing, care programme and common pests and diseases:</p>
+    <div><span>🍅 Tomato</span><span>🥬 Sukuma wiki</span><span>🥬 Cabbage</span><span>🧅 Bulb onion</span><span>🫑 Capsicum</span><span>🫛 French beans</span><span>🥬 Spinach</span><span>🥕 Carrot</span><span>🍉 Watermelon</span><span>🥔 Irish potato</span><span>🎃 Butternut</span><span>🫛 Garden peas</span><span>🥑 Avocado</span><span>🟣 Passion fruit</span><span>🍌 Banana</span><span>🥭 Mango</span></div>
+  </div>
+
+  <div class="three">
+    <div><b>1. Open the link</b><span>Go to app.mydukago.co.ke/farm-on-the-go on your phone.</span></div>
+    <div><b>2. Add it to your home screen</b><span>From your browser menu. After that it opens like any other app, even offline.</span></div>
+    <div><b>3. Choose farmer or nursery</b><span>Add your crops or seedling batches and you are ready.</span></div>
+  </div>
+  <p class="small">Spray advice names active ingredients only. Always use products registered by the Pest Control Products Board, follow the label, and ask your agronomist or county agricultural officer when unsure. Your records stay on your phone - save a backup from the app now and then.</p>
+</div>
+</section>
+<!-- ===== end Farm on the Go ===== -->
