@@ -2,7 +2,7 @@
    Everything is kept on this phone (IndexedDB 'farm_on_the_go_v1'), so it works with no internet at all. It shares
    nothing with the other DukaGO apps: its own database, its own offline cache and its own settings. */
 'use strict';
-const BUILD = '2026-11-05-2';
+const BUILD = '2026-11-05-3';
 const L = window.FARM_LIB;
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -529,6 +529,7 @@ function moreTab() {
   let h = '<div class="card"><div class="row"><div class="em">' + (prop ? '🌱' : '🧑‍🌾') + '</div><div class="grow"><div class="t">' + esc(p.name || '') + '</div><div class="s">' + esc(p.farm || '') + (p.county ? ' · ' + esc(p.county) : '') + '</div></div><button class="btn sm" onclick="A.profile()">Edit</button></div></div>';
   h += '<div class="card list">' + item('🚜', 'What is on your farm', ents().map(e => ENTS[e][1]).join(', '), 'A.activities()') + (prop || !hasAnimals() || !hasEnt('crops') ? '' : item('🩺', 'Plant doctor', 'Check sick plants', 'A.go(\'doctor\')')) + (prop ? '' : item('🗺️', 'Fields and blocks', 'Where each crop is planted', 'A.fields()') + item('🌱', 'Seedlings I ordered', 'Know when they are ready to plant', 'A.seedOrders()')) +
     (prop ? item('🩺', 'Plant doctor', 'Check sick seedlings', 'A.go(\'doctor\')') : '') +
+    item('🌱', 'My crops', (prof().crops || []).map(c0).join(', ') || 'All crops', 'A.myCrops()') +
     item('📚', 'Crop guide', 'How each crop grows, its care and problems', 'A.openV({t:\'guide\'})') +
     item('🧮', 'Seedling calculator', 'How many seedlings for your land', 'A.calc()') + '</div>';
   h += '<div class="card list">' + item(prop ? '🧑‍🌾' : '🌱', 'Switch to the ' + (prop ? 'farmer' : 'propagator') + ' side', prop ? 'If you also grow crops' : 'If you also raise seedlings for sale', 'A.switchRole()') +
@@ -804,7 +805,18 @@ const animalActions = {
 const TABS = { today: () => isProp() ? todayProp() : todayFarmer(), crops: cropsTab, doctor: doctorTab, money: moneyTab, more: moreTab, batches: batchesTab, orders: ordersTab, animals: animalsTab };
 
 // ================= actions =================
-const cropOpts = (withOther) => { const mine = (prof().crops || []); const list = mine.concat(L.CROPS.map(c => c.id).filter(id => !mine.includes(id))); return list.map(id => [id, crop(id).e + ' ' + crop(id).n]).concat(withOther ? [['other', '🌿 Other crop']] : []); };
+// crop pickers show only the crops this farm chose, plus any crop an existing record already uses
+const cropOpts = (withOther, keep) => {
+  const mine = prof().crops || [], list = mine.length ? mine.slice() : L.CROPS.map(c => c.id);
+  if (keep && keep !== 'other' && !list.includes(keep)) list.push(keep);
+  const rest = L.CROPS.some(c => !list.includes(c.id));
+  return list.map(id => [id, crop(id).e + ' ' + crop(id).n]).concat(withOther ? [['other', '🌿 Other crop']] : [], rest ? [['__addcrop', '+ Add another crop…']] : []);
+};
+document.addEventListener('change', e => {
+  const el = e.target; if (!el || el.tagName !== 'SELECT' || el.value !== '__addcrop') return;
+  el.value = el.options[0].value;   // a real crop stays selected until one is picked
+  A.addCrop(el);
+}, true);
 const fieldOpts = () => [['', 'No field / not set']].concat(D.fields.map(f => [f.id, f.name])).concat([['__new', '+ Add a new field…']]);
 const plantOpts = (pid) => [['', 'Not for one crop (general)']].concat(D.plantings.filter(p => p.status !== 'ended' || p.id === pid).map(p => [p.id, pName(p)]));
 const batchOpts = (bid) => [['', 'Not for one batch (general)']].concat(D.batches.filter(b => !b.closed || b.id === bid).map(b => [b.id, bName(b) + ' (sown ' + fmtD(b.sow) + ')']));
@@ -812,8 +824,28 @@ async function newFieldInline(sel) {
   const name = prompt('Name of the new field or block (e.g. "Block A - near the river")'); if (!name) { sel.value = ''; return; }
   const f = await save('fields', { id: uid(), name: name.trim() }); sel.insertAdjacentHTML('beforeend', '<option value="' + f.id + '">' + esc(f.name) + '</option>'); sel.value = f.id;
 }
+const c0 = id => crop(id).n;
 const A = window.A = {
   go, openV: openView,
+  addCrop(sel) {
+    const mine = prof().crops || [], rest = L.CROPS.filter(c => !mine.includes(c.id));
+    const ov = sheet('Add another crop', '<div class="chips">' + rest.map(c => '<button class="chip" data-c="' + c.id + '">' + c.e + ' ' + esc(c.n) + '</button>').join('') + '</div>', { noFocus: true });
+    ov.querySelector('.chips').onclick = async e => {
+      const b = e.target.closest('[data-c]'); if (!b) return;
+      await setK('profile', Object.assign({}, prof(), { crops: mine.concat([b.dataset.c]) }));
+      closeSheet(false, ov);
+      if (sel && document.body.contains(sel)) {
+        const c = crop(b.dataset.c), o = new Option(c.e + ' ' + c.n, c.id), at = [...sel.options].find(x => x.value === 'other' || x.value === '__addcrop');
+        sel.insertBefore(o, at || null); sel.value = c.id; sel.dispatchEvent(new Event('change', { bubbles: true }));
+      } else render();
+      toast(c0(b.dataset.c) + ' added');
+    };
+  },
+  myCrops() {
+    const mine = prof().crops || [];
+    const ov = sheet('My crops', '<p class="s" style="margin-top:0">Only these show when you add a planting or batch. Records you already have are kept.</p><div class="chips" id="myCropChips">' + L.CROPS.map(c => '<button class="chip ' + (mine.includes(c.id) ? 'on' : '') + '" data-c="' + c.id + '" onclick="this.classList.toggle(\'on\')">' + c.e + ' ' + esc(c.n) + '</button>').join('') + '</div><button class="btn pri wide" style="margin-top:16px" id="myCropSave">Save</button>', { noFocus: true });
+    ov.querySelector('#myCropSave').onclick = async () => { await setK('profile', Object.assign({}, prof(), { crops: [...ov.querySelectorAll('#myCropChips .chip.on')].map(b => b.dataset.c) })); closeSheet(false, ov); render(); toast('Crops updated'); };
+  },
   wRole(r) { W.role = r; render(); setTimeout(() => { const e = $('f_w_name'); e && e.focus(); }, 50); },
   async wDone() {
     const name = $('f_w_name').value.trim(); if (!name) { $('wMsg').innerHTML = '<div class="note bad">Please enter your name</div>'; return; }
@@ -847,7 +879,7 @@ const A = window.A = {
     const p = id ? byId('plantings', id) : null, v = p || Object.assign({ crop: (prof().crops || [])[0] || 'tomato', date: today() }, pre || {});
     const c0 = crop(v.crop);
     const fields = [
-      { k: 'crop', l: 'Crop', t: 'select', o: cropOpts(true), v: v.crop, req: 1 },
+      { k: 'crop', l: 'Crop', t: 'select', o: cropOpts(true, v.crop), v: v.crop, req: 1 },
       { k: 'cropName', l: 'Crop name', v: v.cropName, ph: 'e.g. Chilli, Coriander' },
       { k: 'variety', l: 'Variety', v: v.variety, list: c0.varieties || [], ph: 'e.g. ' + ((c0.varieties || [])[0] || '') },
       { k: 'field', l: 'Field / block', t: 'select', o: fieldOpts(), v: v.field || '' },
@@ -1010,7 +1042,7 @@ const A = window.A = {
   editSOrder(id) {
     const o = id ? byId('sorders', id) : null, v = o || { date: today(), crop: (prof().crops || [])[0] || 'tomato', status: 'waiting' }; if (sheetStack.length) closeSheet();
     form(o ? 'Edit seedling order' : 'Seedlings I ordered', [
-      { k: 'crop', l: 'Crop', t: 'select', o: cropOpts(false), v: v.crop }, { k: 'variety', l: 'Variety', v: v.variety }, { k: 'qty', l: 'Number of seedlings', t: 'num', v: v.qty, req: 1 },
+      { k: 'crop', l: 'Crop', t: 'select', o: cropOpts(false, v.crop), v: v.crop }, { k: 'variety', l: 'Variety', v: v.variety }, { k: 'qty', l: 'Number of seedlings', t: 'num', v: v.qty, req: 1 },
       { k: 'nursery', l: 'Nursery / propagator', v: v.nursery, list: [...new Set(D.sorders.map(x => x.nursery).filter(Boolean))], req: 1 }, { k: 'phone', l: 'Nursery phone', t: 'tel', v: v.phone },
       { k: 'ready', l: 'Ready date (as the nursery told you)', t: 'date', v: v.ready || addD(today(), crop(v.crop).nursery || 30), req: 1 },
       { k: 'price', l: 'Price per seedling (KSh)', t: 'num', v: v.price },
@@ -1059,7 +1091,7 @@ const A = window.A = {
   editBatch(id) {
     const b = id ? byId('batches', id) : null, v = b || { sow: today(), crop: (prof().crops || [])[0] || 'tomato', trays: 10, cells: 200, germ: 85 };
     form(b ? 'Edit batch' : 'New seedling batch', [
-      { k: 'crop', l: 'Crop', t: 'select', o: cropOpts(false), v: v.crop, req: 1 },
+      { k: 'crop', l: 'Crop', t: 'select', o: cropOpts(false, v.crop), v: v.crop, req: 1 },
       { k: 'variety', l: 'Variety', v: v.variety, list: crop(v.crop).varieties || [] },
       { k: 'sow', l: 'Sowing date', t: 'date', v: v.sow, req: 1 },
       { k: 'ready', l: 'Ready date', t: 'date', v: v.ready || addD(v.sow, crop(v.crop).nursery || 30), req: 1, hint: '' },
