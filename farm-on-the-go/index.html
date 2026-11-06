@@ -129,6 +129,17 @@ table.tb tr.tot td { font-weight:750; border-bottom:0; }
 .match > div { height:100%; border-radius:4px; }
 ul.tight { margin:6px 0 0; padding-left:18px; } ul.tight li { margin:3px 0; }
 /* welcome */
+.lock { max-width:420px; margin:0 auto; padding:calc(40px + env(safe-area-inset-top)) 22px 40px; text-align:center; }
+.lock .logo { width:70px; height:70px; border-radius:20px; margin:0 auto 12px; display:block; box-shadow:var(--shadow); }
+.lock h1 { margin:0 0 4px; font-size:24px; }
+.lock .lead { color:var(--muted); margin:0 0 22px; }
+.pindots { display:flex; gap:14px; justify-content:center; margin:0 0 20px; }
+.pindots .pd { width:14px; height:14px; border-radius:50%; border:2px solid var(--muted); box-sizing:border-box; }
+.pindots .pd.on { background:var(--accent); border-color:var(--accent); }
+.keys { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; max-width:280px; margin:0 auto; }
+.keys .pk { font-size:24px; font-weight:600; padding:16px 0; border-radius:14px; border:1px solid var(--line); background:var(--card); color:inherit; cursor:pointer; }
+.keys .pk:active { background:var(--accent); border-color:var(--accent); color:#1a1205; }
+.linkbtn { background:none; border:none; color:var(--accent); font-weight:600; text-decoration:underline; cursor:pointer; padding:0; font-size:inherit; }
 .welcome { max-width:520px; margin:0 auto; padding:calc(30px + env(safe-area-inset-top)) 18px 40px; }
 .welcome .logo { width:74px; height:74px; border-radius:20px; display:block; margin:0 auto 14px; box-shadow:var(--shadow); }
 .welcome h1 { text-align:center; margin:0 0 6px; font-size:28px; letter-spacing:-.4px; }

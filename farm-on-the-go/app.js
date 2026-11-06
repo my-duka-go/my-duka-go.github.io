@@ -2,7 +2,7 @@
    Everything is kept on this phone (IndexedDB 'farm_on_the_go_v1'), so it works with no internet at all. It shares
    nothing with the other DukaGO apps: its own database, its own offline cache and its own settings. */
 'use strict';
-const BUILD = '2026-11-05-3';
+const BUILD = '2026-11-06-1';
 const L = window.FARM_LIB;
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -219,6 +219,7 @@ function go(tab) { S.tab = tab; S.view = null; render(); window.scrollTo(0, 0); 
 function openView(v) { S.view = v; history.pushState({ view: 1 }, ''); render(); window.scrollTo(0, 0); }
 function back() { history.back(); }
 function render() {
+  if (LOCKED && K.lock) { $('top').classList.add('hide'); $('tabs').classList.add('hide'); $('backBtn').classList.add('hide'); $('main').innerHTML = lockHtml(); return; }
   if (!K.profile) { $('top').classList.add('hide'); $('tabs').classList.add('hide'); $('main').innerHTML = welcomeHtml(); return; }
   const tabs = tabsNow();
   if (S.tab !== 'doctor' && !tabs.some(t => t[0] === S.tab)) S.tab = 'today';
@@ -238,6 +239,7 @@ function render() {
 
 // ================= welcome =================
 let W = { role: null };
+let LOCKED = false, PINBUF = '', PINERR = '';
 function welcomeHtml() {
   const c = L.CROPS;
   return '<div class="welcome"><img class="logo" src="icons/icon-192-f1.png" alt=""><h1>Farm on the Go</h1><p class="lead">Plan, record and sell - on your phone, even with no internet.</p>' +
@@ -535,6 +537,8 @@ function moreTab() {
   h += '<div class="card list">' + item(prop ? '🧑‍🌾' : '🌱', 'Switch to the ' + (prop ? 'farmer' : 'propagator') + ' side', prop ? 'If you also grow crops' : 'If you also raise seedlings for sale', 'A.switchRole()') +
     item(document.documentElement.dataset.theme === 'light' ? '🌙' : '☀️', document.documentElement.dataset.theme === 'light' ? 'Dark screen' : 'Light screen', 'Light is easier to read in the sun', 'A.theme()') +
     item('🔔', 'Reminders on this phone', K.notify ? 'On - shown when the app is opened' : 'Off', 'A.notify()') +
+    item('🔒', 'Screen lock', K.lock ? 'PIN on - asked when the app opens' : 'Off - add a PIN to open the app', 'A.pinSet()') +
+    (K.lock ? item('🔐', 'Lock now', 'Lock the screen straight away', 'A.lockNow()') : '') +
     item('💾', 'Backup', 'Save all records to a file, or restore them', 'A.backup()') + '</div>';
   h += '<p class="xs" style="text-align:center">Farm on the Go · build ' + BUILD + ' · records stay on this phone<br>Spray advice is general - always follow the product label and PCPB rules.</p>';
   return ['More', h];
@@ -825,8 +829,71 @@ async function newFieldInline(sel) {
   const f = await save('fields', { id: uid(), name: name.trim() }); sel.insertAdjacentHTML('beforeend', '<option value="' + f.id + '">' + esc(f.name) + '</option>'); sel.value = f.id;
 }
 const c0 = id => crop(id).n;
+// ---------------- screen lock (PIN) ----------------
+const _hex = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+function _rsalt() { const a = new Uint8Array(16); if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(a); else for (let i = 0; i < 16; i++) a[i] = Math.random() * 256 | 0; return _hex(a.buffer); }
+async function hashPin(pin, saltHex, iter) {
+  const enc = new TextEncoder();
+  if (window.crypto && crypto.subtle) {
+    const salt = Uint8Array.from(saltHex.match(/../g).map(h => parseInt(h, 16)));
+    const base = await crypto.subtle.importKey('raw', enc.encode(pin), { name: 'PBKDF2' }, false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' }, base, 256);
+    return _hex(bits);
+  }
+  let h = saltHex + '|' + pin; for (let i = 0; i < iter; i++) { let x = 5381; for (let j = 0; j < h.length; j++) x = (x * 33 + h.charCodeAt(j)) >>> 0; h = (x.toString(16)) + h.slice(0, 40); } return h;
+}
+function lockHtml() {
+  const len = (K.lock && K.lock.len) || 4;
+  const dots = Array.from({ length: len }, (_, i) => '<span class="pd' + (i < PINBUF.length ? ' on' : '') + '"></span>').join('');
+  const keys = ['1','2','3','4','5','6','7','8','9','','0','back'].map(k => k === '' ? '<span></span>' : '<button class="pk" onclick="A.pk(\'' + k + '\')">' + (k === 'back' ? '⌫' : k) + '</button>').join('');
+  return '<div class="lock"><img class="logo" src="icons/icon-192-f1.png" alt=""><h1>Farm on the Go</h1>' +
+    '<p class="lead">Enter your PIN to open the app</p>' +
+    '<div class="pindots">' + dots + '</div>' +
+    (PINERR ? '<div class="note bad" style="text-align:center">' + esc(PINERR) + '</div>' : '') +
+    '<div class="keys">' + keys + '</div>' +
+    '<p class="xs" style="text-align:center;margin-top:18px">Forgot your PIN? <button class="linkbtn" onclick="A.pinForgot()">What to do</button></p></div>';
+}
 const A = window.A = {
   go, openV: openView,
+  async pk(k) {
+    if (!LOCKED) return;
+    const len = (K.lock && K.lock.len) || 4; PINERR = '';
+    if (k === 'back') PINBUF = PINBUF.slice(0, -1); else if (PINBUF.length < len) PINBUF += k;
+    if (PINBUF.length === len) return A.pinTry();
+    render();
+  },
+  async pinTry() {
+    const L = K.lock; if (!L) { LOCKED = false; return render(); }
+    const h = await hashPin(PINBUF, L.salt, L.iter);
+    if (h === L.hash) { LOCKED = false; PINBUF = ''; PINERR = ''; render(); }
+    else { PINBUF = ''; PINERR = 'Wrong PIN, try again'; if (navigator.vibrate) try { navigator.vibrate(120); } catch (e) {} render(); }
+  },
+  lockNow() { if (!K.lock) { toast('Set a PIN first'); return A.pinSet(); } LOCKED = true; PINBUF = ''; PINERR = ''; closeAll(); render(); },
+  pinForgot() { sheet('Forgot PIN', '<p class="s" style="margin-top:0">The PIN locks the screen so someone who picks up the phone cannot open the app. It does not scramble your records, and a forgotten PIN cannot be recovered from here.</p><p class="s">If you keep a backup file, you can reinstall the app and restore it. As a last resort, clearing this app’s data in your phone’s browser settings removes the lock, but it also erases the records on this phone — so back up first.</p>', { noFocus: true }); },
+  pinSet() {
+    const has = !!K.lock;
+    sheet(has ? 'Change or remove PIN' : 'Set a PIN',
+      (has ? '<div class="fld"><span>Current PIN</span><input id="pinCur" type="password" inputmode="numeric" maxlength="6" autocomplete="off"></div>' : '') +
+      '<div class="fld"><span>' + (has ? 'New PIN' : 'PIN') + ' (4 to 6 digits)</span><input id="pinNew" type="password" inputmode="numeric" maxlength="6" autocomplete="off"></div>' +
+      '<div class="fld"><span>Repeat ' + (has ? 'new ' : '') + 'PIN</span><input id="pinNew2" type="password" inputmode="numeric" maxlength="6" autocomplete="off"></div>' +
+      '<div id="pinMsg"></div><button class="btn pri wide" onclick="A.pinSave()">' + (has ? 'Save new PIN' : 'Turn on lock') + '</button>' +
+      (has ? '<div style="height:8px"></div><button class="btn bad wide" onclick="A.pinRemove()">Remove the lock</button>' : ''), { noFocus: true });
+  },
+  async pinSave() {
+    const set = m => { $('pinMsg').innerHTML = '<div class="note bad">' + esc(m) + '</div>'; };
+    const a = ($('pinNew').value || '').trim(), b = ($('pinNew2').value || '').trim();
+    if (K.lock) { const cur = $('pinCur') ? $('pinCur').value : ''; const h = await hashPin(cur, K.lock.salt, K.lock.iter); if (h !== K.lock.hash) return set('Current PIN is wrong'); }
+    if (!/^[0-9]{4,6}$/.test(a)) return set('Use 4 to 6 digits');
+    if (a !== b) return set('The two PINs do not match');
+    const salt = _rsalt(), iter = 120000, hash = await hashPin(a, salt, iter);
+    await setK('lock', { salt, iter, hash, len: a.length });
+    closeAll(); render(); toast('Screen lock on');
+  },
+  async pinRemove() {
+    const cur = $('pinCur') ? $('pinCur').value : '';
+    if (K.lock) { const h = await hashPin(cur, K.lock.salt, K.lock.iter); if (h !== K.lock.hash) { $('pinMsg').innerHTML = '<div class="note bad">Enter your current PIN to remove the lock</div>'; return; } }
+    await setK('lock', null); LOCKED = false; closeAll(); render(); toast('Screen lock removed');
+  },
   addCrop(sel) {
     const mine = prof().crops || [], rest = L.CROPS.filter(c => !mine.includes(c.id));
     const ov = sheet('Add another crop', '<div class="chips">' + rest.map(c => '<button class="chip" data-c="' + c.id + '">' + c.e + ' ' + esc(c.n) + '</button>').join('') + '</div>', { noFocus: true });
@@ -1242,8 +1309,11 @@ function initSW() {
 (async function start() {
   if (window.FARM_BLOCKED) return;
   $('backBtn').onclick = back; $('roleBtn').onclick = () => { go('more'); };
+  let _hidAt = 0;
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { _hidAt = Date.now(); } else if (K.lock && !LOCKED && _hidAt && Date.now() - _hidAt > 60000) { LOCKED = true; PINBUF = ''; PINERR = ''; closeAll(); render(); } });
   $('tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) { if (S.view) { S.view = null; } go(b.dataset.tab); } });
   try { await openDB(); await loadAll(); } catch (e) { $('main').innerHTML = '<div class="note bad" style="margin:20px">This phone\'s browser storage is not available (' + esc(e.message || e) + '). Open the app in Chrome, not in a private window.</div>'; return; }
+  if (K.lock) LOCKED = true;
   render(); initSW(); setTimeout(() => remindNow(false), 2500);
   setInterval(() => { if (!sheetStack.length && !(document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName))) render(); }, 10 * 60 * 1000);
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
