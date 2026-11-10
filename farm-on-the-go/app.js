@@ -531,6 +531,7 @@ function moreTab() {
   const item = (em, t, s, fn) => '<div class="li" style="cursor:pointer" onclick="' + fn + '"><div class="em">' + em + '</div><div class="grow"><div class="t">' + t + '</div><div class="s">' + s + '</div></div><span class="xs">›</span></div>';
   let h = '<div class="card"><div class="row"><div class="em">' + (prop ? '🌱' : '🧑‍🌾') + '</div><div class="grow"><div class="t">' + esc(p.name || '') + '</div><div class="s">' + esc(p.farm || '') + (p.county ? ' · ' + esc(p.county) : '') + '</div></div><button class="btn sm" onclick="A.profile()">Edit</button></div></div>';
   h += (typeof accountCardHtml === 'function' ? accountCardHtml() : '');
+  h += '<div class="card list">' + item('🌐', 'Language', 'English / Kiswahili / Gĩkũyũ', 'A.language()') + '</div>';
   h += '<div class="card list">' + item('🚜', 'What is on your farm', ents().map(e => ENTS[e][1]).join(', '), 'A.activities()') + (prop || !hasAnimals() || !hasEnt('crops') ? '' : item('🩺', 'Plant doctor', 'Check sick plants', 'A.go(\'doctor\')')) + (prop ? '' : item('🗺️', 'Fields and blocks', 'Where each crop is planted', 'A.fields()') + item('🌱', 'Seedlings I ordered', 'Know when they are ready to plant', 'A.seedOrders()')) +
     (prop ? item('🩺', 'Plant doctor', 'Check sick seedlings', 'A.go(\'doctor\')') : '') +
     item('🌱', 'My crops', (prof().crops || []).map(c0).join(', ') || 'All crops', 'A.myCrops()') +
@@ -1318,6 +1319,7 @@ function initSW() {
   if (K.lock) LOCKED = true;
   render(); initSW(); setTimeout(() => remindNow(false), 2500);
   try { initSync(); } catch (e) {}
+  try { if (K.lang) LANG = K.lang; } catch (e) {}
   setInterval(() => { if (!sheetStack.length && !(document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName))) render(); }, 10 * 60 * 1000);
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
 })();
@@ -1514,3 +1516,106 @@ async function initSync() {
 }
 
 try { Object.assign(window.A, { account: accountSheet, accountSheet, authForm, syncNow, signOut, scheduleSync }); } catch (e) {}
+
+// ================= languages (English / Kiswahili / Gĩkũyũ) =================
+// Core-screen translations. The app renders in English, then this swaps visible
+// text to the chosen language at render time. Anything not in the dictionary
+// falls back to English, so nothing ever breaks. Kikuyu is a DRAFT pending a
+// native-speaker review. Switching language needs no internet.
+let LANG = 'en';
+const LANG_NAMES = { en: 'English', sw: 'Kiswahili', ki: 'Gĩkũyũ' };
+const T_SW = {
+  // tabs / nav
+  'Today': 'Leo', 'My crops': 'Mimea yangu', 'Plant doctor': 'Daktari wa mimea', 'Money': 'Pesa', 'More': 'Zaidi',
+  'Seedlings': 'Miche', 'Orders': 'Maagizo', 'Animals': 'Wanyama',
+  // greetings
+  'Good morning': 'Habari ya asubuhi', 'Good afternoon': 'Habari ya mchana', 'Good evening': 'Habari ya jioni',
+  // onboarding
+  'I am a farmer': 'Mimi ni mkulima', 'I am a propagator': 'Mimi ni mzalishaji wa miche',
+  'About you': 'Kukuhusu', 'Start': 'Anza', 'Next': 'Endelea', 'Farm name': 'Jina la shamba',
+  'County / area': 'Kaunti / eneo', 'Land (acres)': 'Ardhi (ekari)',
+  // quick actions
+  'Planting': 'Kupanda', 'Activity': 'Shughuli', 'Harvest': 'Mavuno', 'Sale': 'Mauzo', 'Expense': 'Matumizi',
+  // common buttons
+  'Save': 'Hifadhi', 'Cancel': 'Ghairi', 'Delete': 'Futa', 'Edit': 'Hariri', 'Keep': 'Weka', 'Accept': 'Kubali',
+  'Done': 'Imekamilika', 'Copy': 'Nakili', 'Add another crop': 'Ongeza zao lingine', 'Close': 'Funga',
+  // today / empty states
+  'Get started': 'Anza', 'Add your first planting': 'Ongeza upandaji wako wa kwanza',
+  'Coming up this week': 'Yanayokuja wiki hii', 'No records yet': 'Hakuna rekodi bado',
+  'Done lately': 'Yaliyofanyika hivi karibuni', 'New planting': 'Upandaji mpya',
+  // money
+  'Income': 'Mapato', 'Costs': 'Gharama', 'Cash': 'Taslimu', 'Credit': 'Mkopo', 'Bank': 'Benki',
+  'All': 'Zote', 'All crops': 'Mazao yote', 'Last 30 days': 'Siku 30 zilizopita', 'Last month': 'Mwezi uliopita',
+  'Last 6 months': 'Miezi 6 iliyopita', 'All time': 'Muda wote',
+  // account / sync
+  'Back up &amp; sync': 'Hifadhi na usawazishe', 'Back up & sync': 'Hifadhi na usawazishe',
+  'Your account': 'Akaunti yako', 'Create an account': 'Fungua akaunti', 'I already have one': 'Tayari nina akaunti',
+  'Sign in': 'Ingia', 'Sign out': 'Toka', 'Sync now': 'Sawazisha sasa', 'Create account': 'Fungua akaunti',
+  'Phone number': 'Nambari ya simu', 'Enter a valid phone number': 'Weka nambari sahihi ya simu',
+  'Create an account so your records are safe': 'Fungua akaunti ili rekodi zako ziwe salama',
+  'Account created': 'Akaunti imefunguliwa', 'Not synced yet': 'Bado haijasawazishwa',
+  // common labels / units
+  'Name': 'Jina', 'Date': 'Tarehe', 'Notes': 'Maelezo', 'Description': 'Maelezo', 'Crop': 'Zao',
+  'Crop name': 'Jina la zao', 'Field / block': 'Shamba / kitalu', 'Grade': 'Daraja', 'Count': 'Hesabu',
+  'Breed': 'Aina', 'Feed': 'Chakula', 'Milk': 'Maziwa', 'Eggs': 'Mayai', 'Cow': 'Ng’ombe',
+  'Dairy': 'Maziwa', 'Milking': 'Kukamua', 'Birds': 'Ndege', 'Layers': 'Kuku wa mayai', 'Broilers': 'Kuku wa nyama',
+  'Flock': 'Kundi', 'Morning': 'Asubuhi', 'Evening': 'Jioni', 'Day': 'Siku',
+  // more menu
+  'Language': 'Lugha', 'What is on your farm': 'Kilicho shambani kwako', 'Fields and blocks': 'Mashamba na vitalu',
+  'Crop guide': 'Mwongozo wa mazao', 'Seedling calculator': 'Kikokotoo cha miche',
+  'Change or remove PIN': 'Badilisha au ondoa PIN', 'Dark screen': 'Skrini nyeusi', 'Light screen': 'Skrini nyeupe',
+};
+const T_KI = {
+  // DRAFT - needs native Gĩkũyũ review before selling
+  'Today': 'Ũmũthĩ', 'My crops': 'Mĩmera yakwa', 'Plant doctor': 'Ndagĩtarĩ wa mĩmera', 'Money': 'Mbeeca', 'More': 'Ingĩ',
+  'Seedlings': 'Mĩtĩ mĩnini', 'Orders': 'Oda', 'Animals': 'Nyamũ',
+  'Good morning': 'Wĩ mwega rũcinĩ', 'Good afternoon': 'Wĩ mwega mũthenya', 'Good evening': 'Wĩ mwega hwaĩ-inĩ',
+  'I am a farmer': 'Niĩ ndĩ mũrĩmi', 'I am a propagator': 'Niĩ ndĩ mũkũria wa mĩtĩ',
+  'About you': 'Ũhoro waku', 'Start': 'Ambĩrĩria', 'Next': 'Thiĩ na mbere', 'Farm name': 'Rĩĩtwa rĩa mũgũnda',
+  'County / area': 'Kaũnti / gĩcigo', 'Land (acres)': 'Mĩgũnda (eka)',
+  'Planting': 'Kũhaanda', 'Activity': 'Wĩra', 'Harvest': 'Magetha', 'Sale': 'Wendia', 'Expense': 'Mahũthĩro',
+  'Save': 'Iga', 'Cancel': 'Tiga', 'Delete': 'Eheria', 'Edit': 'Garũra', 'Keep': 'Iga', 'Accept': 'Ĩtĩkĩra',
+  'Done': 'Nĩ thiru', 'Copy': 'Kopi', 'Add another crop': 'Ongerera mũmera ũngĩ', 'Close': 'Hinga',
+  'Get started': 'Ambĩrĩria', 'Add your first planting': 'Ongerera mũhaando waku wa mbere',
+  'Coming up this week': 'Marĩa marooka kiumia gĩkĩ', 'No records yet': 'Gũtirĩ maandĩko o na rĩ',
+  'Done lately': 'Marĩa meekĩtwo ica ikuhĩ', 'New planting': 'Mũhaando mwerũ',
+  'Income': 'Uumithio', 'Costs': 'Mahũthĩro', 'Cash': 'Mbeeca mũthũrũ', 'Credit': 'Mũkopo', 'Bank': 'Benki',
+  'All': 'Ciothe', 'All crops': 'Mĩmera yothe', 'Last 30 days': 'Mĩthenya 30 ĩthirĩte', 'Last month': 'Mweri mũthiru',
+  'Last 6 months': 'Mĩeri 6 ĩthirĩte', 'All time': 'Mahinda mothe',
+  'Back up &amp; sync': 'Iga na ũnyitithanie', 'Back up & sync': 'Iga na ũnyitithanie',
+  'Your account': 'Akaũnti yaku', 'Create an account': 'Thondeka akaũnti', 'I already have one': 'Ndĩ na akaũnti',
+  'Sign in': 'Toonya', 'Sign out': 'Uma', 'Sync now': 'Nyitithania rĩu', 'Create account': 'Thondeka akaũnti',
+  'Phone number': 'Namba ya thimũ', 'Enter a valid phone number': 'Andĩka namba ya thimũ ya ma',
+  'Create an account so your records are safe': 'Thondeka akaũnti nĩgeetha maandĩko maku magĩe na ũgitĩri',
+  'Account created': 'Akaũnti nĩyathondekwo', 'Not synced yet': 'Gũtirĩ kũnyitithanio o na rĩ',
+  'Name': 'Rĩĩtwa', 'Date': 'Mũthenya', 'Notes': 'Ũhoro', 'Description': 'Ũtaarĩria', 'Crop': 'Mũmera',
+  'Crop name': 'Rĩĩtwa rĩa mũmera', 'Field / block': 'Mũgũnda', 'Grade': 'Gĩthimo', 'Count': 'Gũtara',
+  'Breed': 'Mũthemba', 'Feed': 'Irio', 'Milk': 'Iria', 'Eggs': 'Matumbĩ', 'Cow': 'Ng’ombe',
+  'Dairy': 'Iria', 'Milking': 'Gũkama', 'Birds': 'Nyoni', 'Layers': 'Nyoni cia matumbĩ', 'Broilers': 'Nyoni cia nyama',
+  'Flock': 'Mũtongo', 'Morning': 'Rũcinĩ', 'Evening': 'Hwaĩ-inĩ', 'Day': 'Mũthenya',
+  'Language': 'Rũthiomi', 'What is on your farm': 'Kĩrĩa kĩrĩ mũgũnda-inĩ waku', 'Fields and blocks': 'Mĩgũnda',
+  'Crop guide': 'Ũtaarania wa mĩmera', 'Seedling calculator': 'Gũtara mĩtĩ',
+  'Change or remove PIN': 'Garũra kana ũrute PIN', 'Dark screen': 'Kĩoneki kĩirũ', 'Light screen': 'Kĩoneki kĩerũ',
+};
+function langDict() { return LANG === 'sw' ? T_SW : LANG === 'ki' ? T_KI : null; }
+function translateDOM(root) {
+  const d = langDict(); if (!d || !root) return;
+  try {
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null); const nodes = []; let n;
+    while (n = w.nextNode()) nodes.push(n);
+    for (const node of nodes) { const raw = node.nodeValue, key = raw.trim(); if (!key) continue; if (d[key] != null) node.nodeValue = raw.replace(key, d[key]); }
+    root.querySelectorAll && root.querySelectorAll('[placeholder]').forEach(el => { const k = (el.getAttribute('placeholder') || '').trim(); if (d[k] != null) el.setAttribute('placeholder', d[k]); });
+  } catch (e) {}
+}
+function langSheet() {
+  const row = (code) => '<button class="btn wide ' + (LANG === code ? 'pri' : '') + '" onclick="A.setLang(\'' + code + '\')" style="margin-bottom:8px">' + LANG_NAMES[code] + (LANG === code ? '  ✓' : '') + '</button>';
+  sheet('Language', '<p class="s" style="margin-top:0">Choose the language for the app. It works offline and you can change it any time.</p>' + row('en') + row('sw') + row('ki') + '<p class="s" style="margin-top:6px;opacity:.7">Gĩkũyũ is a first draft and is still being checked.</p>', { noFocus: true });
+}
+async function setLang(code) { LANG = code; try { await setK('lang', code); } catch (e) {} try { closeAll(); } catch (e) {} render(); }
+
+// translate after every render and when a sheet opens (English source -> chosen language)
+(function () {
+  if (typeof render === 'function') { const _r = render; render = function () { const o = _r.apply(this, arguments); if (LANG !== 'en') { try { translateDOM(document.body); } catch (e) {} } return o; }; }
+  if (typeof sheet === 'function') { const _s = sheet; sheet = function () { const ov = _s.apply(this, arguments); if (LANG !== 'en' && ov && ov.nodeType) { try { translateDOM(ov); } catch (e) {} } return ov; }; }
+})();
+try { Object.assign(window.A, { language: langSheet, setLang }); } catch (e) {}
