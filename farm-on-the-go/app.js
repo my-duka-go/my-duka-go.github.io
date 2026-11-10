@@ -1680,3 +1680,14 @@ async function setLang(code) { LANG = code; try { await setK('lang', code); } ca
   if (typeof sheet === 'function') { const _s = sheet; sheet = function () { const ov = _s.apply(this, arguments); if (LANG !== 'en' && ov && ov.nodeType) { try { translateDOM(ov); } catch (e) {} } return ov; }; }
 })();
 try { Object.assign(window.A, { language: langSheet, setLang }); } catch (e) {}
+
+// ================= install / first-open ping (owner visibility) =================
+(function () {
+  const IURL = 'https://duoshfyiiplvtoasxghn.supabase.co/functions/v1/app-install';
+  const IKEY = 'sb_publishable_TLFyMJjbKSyTKmVOJEb0Ug_zDl9CuLX';
+  const APP = 'farm';
+  function devId() { try { let d = localStorage.getItem('dg_dev'); if (!d) { d = Date.now().toString(36) + Math.random().toString(36).slice(2, 8); localStorage.setItem('dg_dev', d); } return d; } catch (e) { return null; } }
+  function ping(ev) { try { let acct = ''; try { acct = (typeof sess === 'function' && sess() && sess().name) || ''; } catch (e) {} fetch(IURL, { method: 'POST', headers: { apikey: IKEY, Authorization: 'Bearer ' + IKEY, 'Content-Type': 'application/json' }, body: JSON.stringify({ app: APP, event: ev, device_id: devId(), account: acct }) }).catch(() => {}); } catch (e) {} }
+  try { if (!localStorage.getItem('dg_opened')) { localStorage.setItem('dg_opened', '1'); ping('first_open'); } } catch (e) {}
+  try { window.addEventListener('appinstalled', () => ping('installed')); } catch (e) {}
+})();
