@@ -26,12 +26,12 @@ const monthName = k => pd(k + '-01').toLocaleDateString('en-GB', { month: 'short
 
 // ---------------- storage ----------------
 const DBN = 'farm_on_the_go_v1';
-const STORES = ['kv', 'fields', 'plantings', 'acts', 'harvests', 'sales', 'expenses', 'batches', 'orders', 'sorders', 'dx'];
+const STORES = ['kv', 'fields', 'plantings', 'acts', 'harvests', 'sales', 'expenses', 'batches', 'orders', 'sorders', 'dx', 'animals', 'milk', 'herdlog', 'flocks', 'flocklog'];
 let db; const D = {}; const K = {};
 function openDB() {
   return new Promise((res, rej) => {
-    const r = indexedDB.open(DBN, 1);
-    r.onupgradeneeded = () => { const d = r.result; STORES.forEach(s => { if (!d.objectStoreNames.contains(s)) d.createObjectStore(s, { keyPath: 'id' }); }); };
+    const r = indexedDB.open(DBN, 3);
+    r.onupgradeneeded = () => { const d = r.result; STORES.forEach(s => { if (!d.objectStoreNames.contains(s)) d.createObjectStore(s, { keyPath: 'id' }); }); if (!d.objectStoreNames.contains('_sync')) d.createObjectStore('_sync', { keyPath: 'id' }); };
     r.onsuccess = () => { db = r.result; res(); }; r.onerror = () => rej(r.error);
   });
 }
@@ -41,11 +41,12 @@ async function loadAll() {
 }
 async function save(s, obj) {
   obj.updated_at = new Date().toISOString();
+  obj._d = obj.updated_at;                       // mark dirty for cloud sync
   const a = D[s], i = a.findIndex(x => x.id === obj.id); if (i >= 0) a[i] = obj; else a.push(obj);
-  await idb(s, 'readwrite', o => o.put(obj)); return obj;
+  await idb(s, 'readwrite', o => o.put(obj)); if (typeof scheduleSync === 'function') scheduleSync(); return obj;
 }
-async function remove(s, id) { D[s] = D[s].filter(x => x.id !== id); await idb(s, 'readwrite', o => o.delete(id)); }
-async function setK(k, v) { K[k] = v; await idb('kv', 'readwrite', o => o.put({ id: k, v })); }
+async function remove(s, id) { const rec = D[s].find(x => x.id === id); try { if (s !== 'kv') await idb('_sync', 'readwrite', o => o.put({ id: 'tomb:' + s + ':' + id, store: s, rid: id, doc: { id: id }, _ts: new Date().toISOString() })); } catch (e) {} D[s] = D[s].filter(x => x.id !== id); await idb(s, 'readwrite', o => o.delete(id)); if (typeof scheduleSync === 'function') scheduleSync(); }
+async function setK(k, v) { K[k] = v; const loc = (typeof KV_LOCAL !== 'undefined' && KV_LOCAL.includes(k)) || k[0] === '_'; const rec = { id: k, v }; if (!loc) rec._d = new Date().toISOString(); await idb('kv', 'readwrite', o => o.put(rec)); if (!loc && typeof scheduleSync === 'function') scheduleSync(); }
 const byId = (s, id) => D[s].find(x => x.id === id);
 const prof = () => K.profile || {};
 const isProp = () => prof().role === 'propagator';
@@ -130,7 +131,7 @@ function incomeRows() {   // every shilling earned: sales, plus seedling orders 
 }
 function owed() {
   const r = [];
-  D.sales.filter(mine).forEach(s => { const b = saleTotal(s) - salePaid(s); if (b > 0.5) r.push({ who: s.buyer || 'Buyer', phone: s.phone, amt: b, date: s.date, s }); });
+  D.sales.filter(s => mine(s) || s.ent).forEach(s => { const b = saleTotal(s) - salePaid(s); if (b > 0.5) r.push({ who: s.buyer || 'Buyer', phone: s.phone, amt: b, date: s.date, s }); });
   if (isProp()) D.orders.filter(o => o.status === 'collected').forEach(o => { const b = num(o.qty) * num(o.price) - num(o.paid); if (b > 0.5) r.push({ who: o.name, phone: o.phone, amt: b, date: o.collected || o.date, o }); });
   return r.sort((a, b) => b.amt - a.amt);
 }
@@ -207,14 +208,22 @@ const emptyBox = (em, t, s, btn) => '<div class="card empty"><div class="em">' +
 const S = { tab: 'today', view: null, moneyP: 'month', dx: null };
 const FARMER_TABS = [['today', '🏡', 'Today'], ['crops', '🌱', 'My crops'], ['doctor', '🩺', 'Plant doctor'], ['money', '💰', 'Money'], ['more', '☰', 'More']];
 const PROP_TABS = [['today', '🏡', 'Today'], ['batches', '🌱', 'Seedlings'], ['orders', '📥', 'Orders'], ['money', '💰', 'Money'], ['more', '☰', 'More']];
+function tabsNow() {
+  if (isProp()) return hasAnimals() ? PROP_TABS.slice(0, 3).concat([['animals', '🐄', 'Animals']], PROP_TABS.slice(3)) : PROP_TABS;
+  const a = hasAnimals(), c = hasEnt('crops'), t = [FARMER_TABS[0]];
+  if (c) t.push(FARMER_TABS[1]);
+  if (a) t.push(['animals', '🐄', 'Animals']);
+  if (!(a && c)) t.push(FARMER_TABS[2]);
+  return t.concat(FARMER_TABS.slice(3));
+}
 function go(tab) { S.tab = tab; S.view = null; render(); window.scrollTo(0, 0); }
 function openView(v) { S.view = v; history.pushState({ view: 1 }, ''); render(); window.scrollTo(0, 0); }
 function back() { history.back(); }
 function render() {
   if (LOCKED && K.lock) { $('top').classList.add('hide'); $('tabs').classList.add('hide'); $('backBtn').classList.add('hide'); $('main').innerHTML = lockHtml(); return; }
   if (!K.profile) { $('top').classList.add('hide'); $('tabs').classList.add('hide'); $('main').innerHTML = welcomeHtml(); return; }
-  const tabs = isProp() ? PROP_TABS : FARMER_TABS;
-  if (!tabs.some(t => t[0] === S.tab)) S.tab = 'today';
+  const tabs = tabsNow();
+  if (S.tab !== 'doctor' && !tabs.some(t => t[0] === S.tab)) S.tab = 'today';
   $('top').classList.remove('hide'); $('tabs').classList.remove('hide');
   const badge = isProp() ? D.orders.filter(o => o.status === 'pending').length : 0;
   $('tabs').innerHTML = tabs.map(t => '<button data-tab="' + t[0] + '" class="' + (S.tab === t[0] ? 'on' : '') + '"><i>' + t[1] + '</i>' + t[2] + (t[0] === 'orders' && badge ? '<span class="dot">' + badge + '</span>' : '') + '</button>').join('');
@@ -236,7 +245,7 @@ function welcomeHtml() {
   const c = L.CROPS;
   return '<div class="welcome"><img class="logo" src="icons/icon-192-f1.png" alt=""><h1>Farm on the Go</h1><p class="lead">Plan, record and sell - on your phone, even with no internet.</p>' +
     '<h2>Who are you?</h2>' +
-    '<button class="rolecard ' + (W.role === 'farmer' ? 'on' : '') + '" onclick="A.wRole(\'farmer\')"><i>🧑‍🌾</i><div><b>I am a farmer</b><span class="s">Crop calendar and spray reminders, records, harvests, sales and profit, and a plant doctor.</span></div></button>' +
+    '<button class="rolecard ' + (W.role === 'farmer' ? 'on' : '') + '" onclick="A.wRole(\'farmer\')"><i>🧑‍🌾</i><div><b>I am a farmer</b><span class="s">Crop calendars, dairy and poultry records, sales and profit, and a plant doctor.</span></div></button>' +
     '<button class="rolecard ' + (W.role === 'propagator' ? 'on' : '') + '" onclick="A.wRole(\'propagator\')"><i>🌱</i><div><b>I am a propagator</b><span class="s">Seedling batches with ready dates, stock that is ready or about to be, and farmers\' orders to accept or decline.</span></div></button>' +
     (W.role ? '<h2>About you</h2><div class="card">' +
       fieldHtml({ k: 'w_name', l: 'Your name', req: 1, ph: 'e.g. Jane Wanjiku' }) +
@@ -245,7 +254,7 @@ function welcomeHtml() {
       fieldHtml({ k: 'w_phone', l: 'Phone (for WhatsApp)', t: 'tel', ph: '07..' }) +
       '<div class="fld"><span>' + (W.role === 'farmer' ? 'What do you grow?' : 'What seedlings do you raise?') + ' (tap all that apply)</span><div class="chips" id="wCrops">' +
       c.map(x => '<button class="chip" data-c="' + x.id + '" onclick="this.classList.toggle(\'on\')">' + x.e + ' ' + esc(x.n) + '</button>').join('') + '</div></div>' +
-      '<div id="wMsg"></div><button class="btn pri wide" onclick="A.wDone()">Start</button></div>' : '') +
+      '<div class="fld"><span>Do you also keep? (tap all that apply)</span><div class="chips" id="wEnts"><button class="chip" data-e="dairy" onclick="this.classList.toggle(\'on\')">🐄 Dairy cows</button><button class="chip" data-e="poultry" onclick="this.classList.toggle(\'on\')">🐔 Poultry</button><button class="chip" data-e="'+(W.role === 'farmer' ? 'nursery' : 'crops')+'" onclick="this.classList.toggle(\'on\')">'+(W.role === 'farmer' ? '🌿 A seedling nursery' : '🌱 Crops')+'</button></div></div><div id="wMsg"></div><button class="btn pri wide" onclick="A.wDone()">Start</button></div>' : '') +
     '<p class="xs" style="text-align:center;margin-top:24px">Your records stay on this phone. Make a backup from More → Backup now and then.</p></div>';
 }
 
@@ -259,9 +268,10 @@ function todayFarmer() {
   const ow = owed(), mon = monthKey(t0);
   const inc = incomeRows().filter(r => monthKey(r.date) === mon).reduce((s, r) => s + r.amt, 0), cost = myExp().filter(e => monthKey(e.date) === mon).reduce((s, e) => s + num(e.amount), 0);
   let h = '<div class="row" style="margin:2px 2px 14px"><div class="grow"><div class="big">' + greet() + (prof().name ? ', ' + esc(prof().name.split(' ')[0]) : '') + '</div><div class="s">' + fmtD(t0) + (prof().farm ? ' · ' + esc(prof().farm) : '') + '</div></div></div>';
-  h += '<div class="quick"><button onclick="A.newPlanting()"><i>🌱</i>Planting</button><button onclick="A.newAct()"><i>🧴</i>Spray / feed</button><button onclick="A.newSale()"><i>🧾</i>Sale</button><button onclick="A.newExpense()"><i>💸</i>Expense</button></div>';
+  h += '<div class="quick">' + (hasEnt('crops') ? '<button onclick="A.newPlanting()"><i>🌱</i>Planting</button>' : '') + '<button onclick="A.newAct()"><i>🧴</i>Spray / feed</button><button onclick="A.newSale()"><i>🧾</i>Sale</button><button onclick="A.newExpense()"><i>💸</i>Expense</button></div>';
+  h += animalsToday();
   h += '<div class="grid3" style="margin-top:12px"><div class="stat"><div class="s">Sales this month</div><div class="v pos">' + ksh(inc) + '</div></div><div class="stat"><div class="s">Costs this month</div><div class="v">' + ksh(cost) + '</div></div><div class="stat"><div class="s">Profit</div><div class="v ' + (inc - cost >= 0 ? 'pos' : 'neg') + '">' + ksh(inc - cost) + '</div></div></div>';
-  if (!pl.length) h += '<h2>Get started</h2>' + emptyBox('🌱', 'Add your first planting', 'Pick the crop and the planting date - the app builds its calendar: feeding, sprays, scouting and when to expect the harvest.', '<button class="btn pri" onclick="A.newPlanting()">+ New planting</button>');
+  if (!pl.length && hasEnt('crops')) h += '<h2>Get started</h2>' + emptyBox('🌱', 'Add your first planting', 'Pick the crop and the planting date - the app builds its calendar: feeding, sprays, scouting and when to expect the harvest.', '<button class="btn pri" onclick="A.newPlanting()">+ New planting</button>');
   phis.forEach(x => { h += '<div class="note bad"><b>⚠️ Do not harvest ' + esc(cropName(x.p)) + ' before ' + fmtD(x.f.until) + '</b><br><span class="s">Waiting period (PHI) after spraying ' + esc(x.f.prod || '') + '.</span></div>'; });
   if (over.length || now.length) h += '<h2>To do today</h2><div class="card">' + over.concat(now).map(taskRow).join('') + '</div>';
   else if (pl.length) h += '<h2>To do today</h2><div class="card"><div class="row"><div class="em">✅</div><div class="grow"><div class="t">Nothing due today</div><div class="s">Scout your crops and record anything you do.</div></div></div></div>';
@@ -409,10 +419,11 @@ function moneyTab() {
   // profit and loss by planting (farmer) or batch (propagator)
   const groups = {};
   const g = (k, n) => (groups[k] = groups[k] || { n, inc: 0, cost: 0 });
-  inc.forEach(r => { if (prop) { const bb = r.batch && byId('batches', r.batch); g(bb ? bb.id : '_', bb ? bName(bb) + ' (sown ' + fmtD(bb.sow) + ')' : 'Other sales').inc += r.amt; } else { const p = r.pid && byId('plantings', r.pid); g(p ? p.id : '_', p ? pName(p) : 'Other sales').inc += r.amt; } });
-  ex.forEach(e => { if (prop) { const bb = e.batch && byId('batches', e.batch); g(bb ? bb.id : '__', bb ? bName(bb) + ' (sown ' + fmtD(bb.sow) + ')' : 'General nursery costs').cost += num(e.amount); } else { const p = e.pid && byId('plantings', e.pid); g(p ? p.id : '__', p ? pName(p) : 'General farm costs').cost += num(e.amount); } });
+  inc.forEach(r => { if (r.s && r.s.ent) { g('#' + r.s.ent, ENTS[r.s.ent][0] + ' ' + ENTS[r.s.ent][1]).inc += r.amt; return; } if (prop) { const bb = r.batch && byId('batches', r.batch); g(bb ? bb.id : '_', bb ? bName(bb) + ' (sown ' + fmtD(bb.sow) + ')' : 'Other sales').inc += r.amt; } else { const p = r.pid && byId('plantings', r.pid); g(p ? p.id : '_', p ? pName(p) : 'Other sales').inc += r.amt; } });
+  ex.forEach(e => { if (e.ent) { g('#' + e.ent, ENTS[e.ent][0] + ' ' + ENTS[e.ent][1]).cost += num(e.amount); return; } if (prop) { const bb = e.batch && byId('batches', e.batch); g(bb ? bb.id : '__', bb ? bName(bb) + ' (sown ' + fmtD(bb.sow) + ')' : 'General nursery costs').cost += num(e.amount); } else { const p = e.pid && byId('plantings', e.pid); g(p ? p.id : '__', p ? pName(p) : 'General farm costs').cost += num(e.amount); } });
   const ks = Object.keys(groups).sort((x, y) => (x[0] === '_') - (y[0] === '_') || (groups[y].inc - groups[y].cost) - (groups[x].inc - groups[x].cost));
-  h += '<h2>Profit and loss · ' + lab + '</h2><div class="card tbwrap"><table class="tb"><tr><th>' + (prop ? 'Batch' : 'Planting') + '</th><th class="n">Income</th><th class="n">Costs</th><th class="n">Profit</th></tr>' +
+  h += wholeFarmHtml(inR, lab);
+  h += '<h2>Profit and loss · ' + lab + '</h2><div class="card tbwrap"><table class="tb"><tr><th>' + (prop ? 'Batch' : hasAnimals() ? 'Crop / animals' : 'Planting') + '</th><th class="n">Income</th><th class="n">Costs</th><th class="n">Profit</th></tr>' +
     (ks.length ? ks.map(k => { const x = groups[k]; return '<tr><td>' + esc(x.n) + '</td><td class="n">' + fmtN(Math.round(x.inc)) + '</td><td class="n">' + fmtN(Math.round(x.cost)) + '</td><td class="n ' + (x.inc - x.cost >= 0 ? 'pos' : 'neg') + '">' + fmtN(Math.round(x.inc - x.cost)) + '</td></tr>'; }).join('') : '<tr><td colspan="4" class="s">Nothing recorded in this period.</td></tr>') +
     '<tr class="tot"><td>Total</td><td class="n">' + fmtN(Math.round(ti)) + '</td><td class="n">' + fmtN(Math.round(tc)) + '</td><td class="n ' + (ti - tc >= 0 ? 'pos' : 'neg') + '">' + fmtN(Math.round(ti - tc)) + '</td></tr></table></div>';
   const cats = {}; ex.forEach(e => { cats[e.cat] = (cats[e.cat] || 0) + num(e.amount); });
@@ -445,6 +456,7 @@ function todayProp() {
   const readyN = bs.filter(x => x.k.st === 'Ready').reduce((s, x) => s + x.k.avail, 0), soonN = bs.filter(x => x.k.st === 'Ready soon').reduce((s, x) => s + x.k.avail, 0), growN = bs.filter(x => x.k.st === 'Growing').reduce((s, x) => s + x.k.avail, 0);
   let h = '<div class="row" style="margin:2px 2px 14px"><div class="grow"><div class="big">' + greet() + (prof().name ? ', ' + esc(prof().name.split(' ')[0]) : '') + '</div><div class="s">' + fmtD(t0) + (prof().farm ? ' · ' + esc(prof().farm) : '') + '</div></div></div>';
   h += '<div class="quick"><button onclick="A.newBatch()"><i>🌱</i>New batch</button><button onclick="A.newOrder()"><i>📥</i>Order</button><button onclick="A.newSale()"><i>🧾</i>Sale</button><button onclick="A.shareStock()"><i>📣</i>Share stock</button></div>';
+  h += animalsToday();
   h += '<div class="grid3" style="margin-top:12px"><div class="stat"><div class="s">Ready now</div><div class="v pos">' + fmtN(readyN) + '</div></div><div class="stat"><div class="s">Ready within 7 days</div><div class="v" style="color:var(--accent)">' + fmtN(soonN) + '</div></div><div class="stat"><div class="s">Still growing</div><div class="v" style="color:var(--blue)">' + fmtN(growN) + '</div></div></div>';
   if (pend.length) h += '<h2>New orders to answer (' + pend.length + ')</h2>' + pend.map(orderCard).join('');
   if (due.length) h += '<h2>Collections due</h2>' + due.map(orderCard).join('');
@@ -518,7 +530,8 @@ function moreTab() {
   const p = prof(), prop = isProp();
   const item = (em, t, s, fn) => '<div class="li" style="cursor:pointer" onclick="' + fn + '"><div class="em">' + em + '</div><div class="grow"><div class="t">' + t + '</div><div class="s">' + s + '</div></div><span class="xs">›</span></div>';
   let h = '<div class="card"><div class="row"><div class="em">' + (prop ? '🌱' : '🧑‍🌾') + '</div><div class="grow"><div class="t">' + esc(p.name || '') + '</div><div class="s">' + esc(p.farm || '') + (p.county ? ' · ' + esc(p.county) : '') + '</div></div><button class="btn sm" onclick="A.profile()">Edit</button></div></div>';
-  h += '<div class="card list">' + (prop ? '' : item('🗺️', 'Fields and blocks', 'Where each crop is planted', 'A.fields()') + item('🌱', 'Seedlings I ordered', 'Know when they are ready to plant', 'A.seedOrders()')) +
+  h += (typeof accountCardHtml === 'function' ? accountCardHtml() : '');
+  h += '<div class="card list">' + item('🚜', 'What is on your farm', ents().map(e => ENTS[e][1]).join(', '), 'A.activities()') + (prop || !hasAnimals() || !hasEnt('crops') ? '' : item('🩺', 'Plant doctor', 'Check sick plants', 'A.go(\'doctor\')')) + (prop ? '' : item('🗺️', 'Fields and blocks', 'Where each crop is planted', 'A.fields()') + item('🌱', 'Seedlings I ordered', 'Know when they are ready to plant', 'A.seedOrders()')) +
     (prop ? item('🩺', 'Plant doctor', 'Check sick seedlings', 'A.go(\'doctor\')') : '') +
     item('🌱', 'My crops', (prof().crops || []).map(c0).join(', ') || 'All crops', 'A.myCrops()') +
     item('📚', 'Crop guide', 'How each crop grows, its care and problems', 'A.openV({t:\'guide\'})') +
@@ -545,7 +558,257 @@ VIEWS.guide = v => {
   }
   return ['Crop guide', '<div class="grid-md">' + L.CROPS.map(c => '<div class="card tap" onclick="A.openV({t:\'guide\',id:\'' + c.id + '\'})"><div class="row"><div class="em">' + c.e + '</div><div class="grow"><div class="t">' + esc(c.n) + '</div><div class="s">' + esc(c.sw) + ' · first harvest ' + (c.first >= 365 ? Math.round(c.first / 365) + ' yrs' : c.first + ' days') + '</div></div><span class="pill ' + (c.level === 'managed' ? 'a' : '') + '">' + (c.level === 'managed' ? 'Full programme' : 'Light care') + '</span></div></div>').join('') + '</div>'];
 };
-const TABS = { today: () => isProp() ? todayProp() : todayFarmer(), crops: cropsTab, doctor: doctorTab, money: moneyTab, more: moreTab, batches: batchesTab, orders: ordersTab };
+// ================= one farm: activities, dairy and poultry =================
+const ENTS = { crops: ['🌱', 'Crops'], nursery: ['🌿', 'Nursery'], dairy: ['🐄', 'Dairy'], poultry: ['🐔', 'Poultry'] };
+const ents = () => prof().activities || [isProp() ? 'nursery' : 'crops'];
+const hasEnt = e => ents().includes(e);
+const hasAnimals = () => hasEnt('dairy') || hasEnt('poultry');
+const COW_STATUS = { milking: 'Milking', dry: 'Dry', heifer: 'Heifer', calf: 'Calf', bull: 'Bull', sold: 'Sold', dead: 'Dead' };
+const HERD_EVENTS = { service: 'AI / bull service', pregcheck: 'Pregnancy check', calving: 'Calving', dryoff: 'Dried off', vaccine: 'Vaccination', deworm: 'Deworming', treat: 'Treatment', vet: 'Vet visit', other: 'Other' };
+const FLOCK_TYPES = { layers: 'Layers', broilers: 'Broilers', kienyeji: 'Kienyeji', other: 'Other' };
+const FLOCK_LOGS = { vaccine: 'Vaccination', treat: 'Treatment', deworm: 'Deworming', vet: 'Vet visit', other: 'Other' };
+const DAIRY_COSTS = ['Feed and fodder', 'Dairy meal', 'Vet and medicine', 'AI / bull service', 'Labour', 'Water', 'Equipment', 'Transport', 'Other'];
+const POULTRY_COSTS = ['Feed', 'Chicks', 'Vet and vaccines', 'Labour', 'Litter and bedding', 'Packaging (trays)', 'Equipment', 'Transport', 'Other'];
+const GESTATION_DAYS = 283;   // typical for dairy cattle; shown as an estimate and can be changed
+const cows = () => D.animals.filter(a => !['sold', 'dead'].includes(a.status)).sort((a, b) => String(a.name).localeCompare(b.name));
+const activeFlocks = () => D.flocks.filter(f => !f.closed);
+const milkOn = d => D.milk.filter(m => m.date === d).reduce((s, m) => s + num(m.am) + num(m.pm), 0);
+const milkIn = (a, b) => D.milk.filter(m => m.date >= a && m.date <= b).reduce((s, m) => s + num(m.am) + num(m.pm), 0);
+const flockLogs = id => D.flocklog.filter(l => l.flock === id);
+function flockCount(f) {
+  const lg = flockLogs(f.id), dead = lg.filter(l => l.kind === 'deaths').reduce((s, l) => s + num(l.qty), 0);
+  const sold = D.sales.filter(s => s.ent === 'poultry' && s.ref === f.id && s.unit === 'bird').reduce((s, x) => s + num(x.qty), 0);
+  return Math.max(0, num(f.count) - dead - sold);
+}
+const entSales = e => D.sales.filter(s => e === 'crops' ? !s.ent && sideOf(s) === 'farmer' : e === 'nursery' ? !s.ent && sideOf(s) === 'propagator' : s.ent === e);
+const entCosts = e => D.expenses.filter(x => e === 'crops' ? !x.ent && sideOf(x) === 'farmer' : e === 'nursery' ? !x.ent && sideOf(x) === 'propagator' : x.ent === e);
+function entMoney(e, inR) {
+  let inc = entSales(e).filter(s => inR(s.date)).reduce((t, s) => t + saleTotal(s), 0);
+  if (e === 'nursery') inc += D.orders.filter(o => o.status === 'collected' && inR(o.collected || o.date)).reduce((t, o) => t + num(o.qty) * num(o.price), 0);
+  return { inc, cost: entCosts(e).filter(x => inR(x.date)).reduce((t, x) => t + num(x.amount), 0) };
+}
+function wholeFarmHtml(inR, lab) {
+  const list = Object.keys(ENTS).filter(e => hasEnt(e) || entSales(e).length || entCosts(e).length);
+  if (list.length < 2) return '';
+  let ti = 0, tc = 0;
+  const rows = list.map(e => { const m = entMoney(e, inR), p = m.inc - m.cost; ti += m.inc; tc += m.cost; return '<tr><td>' + ENTS[e][0] + ' ' + ENTS[e][1] + '</td><td class="n">' + fmtN(Math.round(m.inc)) + '</td><td class="n">' + fmtN(Math.round(m.cost)) + '</td><td class="n ' + (p >= 0 ? 'pos' : 'neg') + '">' + fmtN(Math.round(p)) + '</td></tr>'; }).join('');
+  return '<h2>Whole farm · ' + lab + '</h2><div class="card tbwrap"><table class="tb"><tr><th>Activity</th><th class="n">Income</th><th class="n">Costs</th><th class="n">Profit</th></tr>' + rows + '<tr class="tot"><td>Total</td><td class="n">' + fmtN(Math.round(ti)) + '</td><td class="n">' + fmtN(Math.round(tc)) + '</td><td class="n ' + (ti - tc >= 0 ? 'pos' : 'neg') + '">' + fmtN(Math.round(ti - tc)) + '</td></tr></table></div>';
+}
+// jobs that have a next date: vaccinations, calving due and so on
+function animalDue(horizon) {
+  const lim = addD(today(), horizon), out = [];
+  if (hasEnt('dairy')) D.herdlog.filter(l => l.next && !l.nextDone && l.next <= lim).forEach(l => { const c = byId('animals', l.animal); if (c && !['sold', 'dead'].includes(c.status)) out.push({ em: '🐄', who: c.name, what: l.nextWhat || HERD_EVENTS[l.kind], due: l.next, id: l.id, s: 'herdlog' }); });
+  if (hasEnt('poultry')) D.flocklog.filter(l => l.next && !l.nextDone && l.next <= lim).forEach(l => { const f = byId('flocks', l.flock); if (f && !f.closed) out.push({ em: '🐔', who: f.name, what: l.nextWhat || FLOCK_LOGS[l.kind], due: l.next, id: l.id, s: 'flocklog' }); });
+  return out.sort((a, b) => a.due < b.due ? -1 : 1);
+}
+function withdrawals() {
+  const t0 = today(), out = [];
+  D.herdlog.filter(l => l.withdraw && l.withdraw >= t0).forEach(l => { const c = byId('animals', l.animal); if (c) out.push('<b>⚠️ Do not sell milk from ' + esc(c.name) + ' until after ' + fmtD(l.withdraw) + '</b>'); });
+  D.flocklog.filter(l => l.withdraw && l.withdraw >= t0).forEach(l => { const f = byId('flocks', l.flock); if (f) out.push('<b>⚠️ Do not sell eggs or meat from ' + esc(f.name) + ' until after ' + fmtD(l.withdraw) + '</b>'); });
+  return out.map(x => '<div class="note bad">' + x + '<br><span class="s">Withdrawal period you recorded after treatment.</span></div>').join('');
+}
+const dueRow = x => '<div class="li"><div class="em">' + x.em + '</div><div class="grow"><div class="t">' + esc(x.what) + ' · ' + esc(x.who) + '</div><div class="s">' + fmtD(x.due) + ' · ' + rel(x.due) + '</div></div><button class="btn sm" onclick="A.dueDone(\'' + x.s + '\',\'' + x.id + '\')">Done</button></div>';
+function animalsToday() {
+  if (!hasAnimals()) return '';
+  const t0 = today(), due = animalDue(7);
+  let h = '<div class="quick" style="margin-top:12px">' +
+    (hasEnt('dairy') ? '<button onclick="A.milkDay()"><i>🥛</i>Milk</button><button onclick="A.herdEvent()"><i>🐄</i>Herd event</button>' : '') +
+    (hasEnt('poultry') ? '<button onclick="A.eggsDay()"><i>🥚</i>Eggs</button><button onclick="A.flockEvent()"><i>🐔</i>Flock event</button>' : '') + '</div>';
+  h += withdrawals();
+  if (due.length) h += '<h2>Animal jobs · this week</h2><div class="card list">' + due.map(dueRow).join('') + '</div>';
+  if (hasEnt('dairy') && cows().some(c => c.status === 'milking') && !D.milk.some(m => m.date === t0)) h += '<div class="note">🥛 No milk recorded yet today. <button class="btn sm" onclick="A.milkDay()">Record milk</button></div>';
+  return h;
+}
+function animalsTab() {
+  const t0 = today(), mon = t0.slice(0, 7), inMon = d => monthKey(d) === mon;
+  let h = '';
+  h += withdrawals();
+  if (hasEnt('dairy')) {
+    const m = entMoney('dairy', inMon), list = cows();
+    h += '<h2>🐄 Dairy</h2><div class="grid3"><div class="stat"><div class="s">Milk today</div><div class="v">' + fmtN(milkOn(t0)) + ' L</div></div><div class="stat"><div class="s">Milk this month</div><div class="v">' + fmtN(milkIn(mon + '-01', mon + '-31')) + ' L</div></div><div class="stat"><div class="s">Profit this month</div><div class="v ' + (m.inc - m.cost >= 0 ? 'pos' : 'neg') + '">' + ksh(m.inc - m.cost) + '</div></div></div>';
+    h += '<div class="btns" style="margin:12px 0"><button class="btn pri" onclick="A.milkDay()">🥛 Milk</button><button class="btn" onclick="A.herdEvent()">+ Event</button><button class="btn" onclick="A.anSale(\'dairy\')">+ Sale</button><button class="btn" onclick="A.anCost(\'dairy\')">+ Cost</button><button class="btn" onclick="A.editCow()">+ Cow</button></div>';
+    h += list.length ? '<div class="card list">' + list.map(c => { const tm = D.milk.find(x => x.animal === c.id && x.date === t0); return '<div class="li" style="cursor:pointer" onclick="A.openV({t:\'cow\',id:\'' + c.id + '\'})"><div class="em">🐄</div><div class="grow"><div class="t">' + esc(c.name) + '</div><div class="s">' + esc(c.breed || '') + (c.breed ? ' · ' : '') + COW_STATUS[c.status] + '</div></div><b>' + (tm ? fmtN(num(tm.am) + num(tm.pm)) + ' L' : '') + '</b></div>'; }).join('') + '</div>' : emptyBox('🐄', 'Add your first cow', 'Record milk per cow, breeding, health and what each one earns.', '<button class="btn pri" onclick="A.editCow()">+ Add a cow</button>');
+  }
+  if (hasEnt('poultry')) {
+    const m = entMoney('poultry', inMon), fl = activeFlocks(), eggsT = D.flocklog.filter(l => l.kind === 'eggs' && l.date === t0).reduce((s, l) => s + num(l.qty), 0);
+    h += '<h2>🐔 Poultry</h2><div class="grid3"><div class="stat"><div class="s">Birds now</div><div class="v">' + fmtN(fl.reduce((s, f) => s + flockCount(f), 0)) + '</div></div><div class="stat"><div class="s">Eggs today</div><div class="v">' + fmtN(eggsT) + '</div></div><div class="stat"><div class="s">Profit this month</div><div class="v ' + (m.inc - m.cost >= 0 ? 'pos' : 'neg') + '">' + ksh(m.inc - m.cost) + '</div></div></div>';
+    h += '<div class="btns" style="margin:12px 0"><button class="btn pri" onclick="A.eggsDay()">🥚 Eggs</button><button class="btn" onclick="A.flockEvent()">+ Event</button><button class="btn" onclick="A.anSale(\'poultry\')">+ Sale</button><button class="btn" onclick="A.anCost(\'poultry\')">+ Cost</button><button class="btn" onclick="A.editFlock()">+ Flock</button></div>';
+    h += fl.length ? '<div class="card list">' + fl.map(f => '<div class="li" style="cursor:pointer" onclick="A.openV({t:\'flock\',id:\'' + f.id + '\'})"><div class="em">🐔</div><div class="grow"><div class="t">' + esc(f.name) + '</div><div class="s">' + FLOCK_TYPES[f.type] + ' · ' + dd(f.start, t0) + ' days old on the farm</div></div><b>' + plural(flockCount(f), 'bird') + '</b></div>').join('') + '</div>' : emptyBox('🐔', 'Add your first flock', 'Record eggs, deaths, feed, vaccinations and what each flock earns.', '<button class="btn pri" onclick="A.editFlock()">+ Add a flock</button>');
+  }
+  const due = animalDue(30);
+  if (due.length) h += '<h2>Coming up · 30 days</h2><div class="card list">' + due.map(dueRow).join('') + '</div>';
+  return ['Animals', h];
+}
+const logRow = (l, label, fn) => '<div class="li"><div class="grow"><div class="t">' + esc(label) + '</div><div class="s">' + fmtD(l.date) + (l.notes ? ' · ' + esc(l.notes) : '') + (l.next && !l.nextDone ? ' · next ' + fmtD(l.next) : '') + '</div></div>' + (num(l.cost) ? '<b>' + ksh(num(l.cost)) + '</b>' : '') + '<button class="btn sm" onclick="' + fn + '">Edit</button></div>';
+VIEWS.cow = v => {
+  const c = byId('animals', v.id); if (!c) return ['Cow', '<div class="note">This cow is no longer in your records.</div>'];
+  const t0 = today(), from = addD(t0, -29), rows = D.milk.filter(m => m.animal === c.id).sort((a, b) => a.date < b.date ? 1 : -1), r30 = rows.filter(m => m.date >= from), tot = r30.reduce((s, m) => s + num(m.am) + num(m.pm), 0);
+  const sold = D.sales.filter(s => s.ref === c.id).reduce((s, x) => s + saleTotal(x), 0), costs = D.expenses.filter(e => e.ref === c.id).reduce((s, e) => s + num(e.amount), 0);
+  let h = '<div class="card"><div class="row"><div class="em">🐄</div><div class="grow"><div class="t">' + esc(c.name) + '</div><div class="s">' + esc(c.breed || '') + (c.breed ? ' · ' : '') + COW_STATUS[c.status] + (c.tag ? ' · tag ' + esc(c.tag) : '') + '</div></div><button class="btn sm" onclick="A.editCow(\'' + c.id + '\')">Edit</button></div></div>';
+  h += '<div class="grid3" style="margin-top:12px"><div class="stat"><div class="s">Last 30 days</div><div class="v">' + fmtN(tot) + ' L</div></div><div class="stat"><div class="s">Average per milking day</div><div class="v">' + (r30.length ? fmtN(Math.round(tot / r30.length * 10) / 10) : 0) + ' L</div></div><div class="stat"><div class="s">Costs recorded</div><div class="v">' + ksh(costs) + '</div></div></div>';
+  if (sold) h += '<div class="s" style="margin-top:8px">Direct sales recorded for this animal: ' + ksh(sold) + '</div>';
+  h += '<div class="btns" style="margin:12px 0"><button class="btn pri" onclick="A.herdEvent(null,\'' + c.id + '\')">+ Event</button><button class="btn" onclick="A.anCost(\'dairy\',\'' + c.id + '\')">+ Cost</button></div>';
+  const ev = D.herdlog.filter(l => l.animal === c.id).sort((a, b) => a.date < b.date ? 1 : -1);
+  if (ev.length) h += '<h2>Breeding and health</h2><div class="card list">' + ev.map(l => logRow(l, HERD_EVENTS[l.kind], 'A.herdEvent(\'' + l.id + '\')')).join('') + '</div>';
+  if (rows.length) h += '<h2>Recent milk</h2><div class="card tbwrap"><table class="tb"><tr><th>Date</th><th class="n">Morning</th><th class="n">Evening</th><th class="n">Total</th></tr>' + rows.slice(0, 14).map(m => '<tr><td>' + fmtD(m.date) + '</td><td class="n">' + fmtN(num(m.am)) + '</td><td class="n">' + fmtN(num(m.pm)) + '</td><td class="n">' + fmtN(num(m.am) + num(m.pm)) + '</td></tr>').join('') + '</table></div>';
+  return [c.name, h];
+};
+VIEWS.flock = v => {
+  const f = byId('flocks', v.id); if (!f) return ['Flock', '<div class="note">This flock is no longer in your records.</div>'];
+  const n = flockCount(f), lg = flockLogs(f.id).sort((a, b) => a.date < b.date ? 1 : -1), from = addD(today(), -6), eggs7 = lg.filter(l => l.kind === 'eggs' && l.date >= from).reduce((s, l) => s + num(l.qty), 0);
+  const dead = lg.filter(l => l.kind === 'deaths').reduce((s, l) => s + num(l.qty), 0), sales = D.sales.filter(s => s.ref === f.id).reduce((s, x) => s + saleTotal(x), 0), costs = D.expenses.filter(e => e.ref === f.id).reduce((s, e) => s + num(e.amount), 0);
+  let h = '<div class="card"><div class="row"><div class="em">🐔</div><div class="grow"><div class="t">' + esc(f.name) + '</div><div class="s">' + FLOCK_TYPES[f.type] + ' · started ' + fmtD(f.start) + ' with ' + plural(num(f.count), 'bird') + '</div></div><button class="btn sm" onclick="A.editFlock(\'' + f.id + '\')">Edit</button></div></div>';
+  h += '<div class="grid3" style="margin-top:12px"><div class="stat"><div class="s">Birds now</div><div class="v">' + fmtN(n) + '</div></div><div class="stat"><div class="s">Eggs, 7 days</div><div class="v">' + fmtN(eggs7) + '</div></div><div class="stat"><div class="s">Deaths</div><div class="v">' + fmtN(dead) + '</div></div></div>';
+  h += '<div class="grid2" style="margin-top:10px"><div class="stat"><div class="s">Sales</div><div class="v pos">' + ksh(sales) + '</div></div><div class="stat"><div class="s">Costs</div><div class="v">' + ksh(costs) + '</div></div></div>';
+  h += '<div class="btns" style="margin:12px 0"><button class="btn pri" onclick="A.eggsDay(\'' + f.id + '\')">🥚 Eggs</button><button class="btn" onclick="A.flockQty(\'deaths\',\'' + f.id + '\')">Deaths</button><button class="btn" onclick="A.flockQty(\'feed\',\'' + f.id + '\')">Feed</button><button class="btn" onclick="A.flockEvent(null,\'' + f.id + '\')">+ Event</button><button class="btn" onclick="A.anSale(\'poultry\',\'' + f.id + '\')">+ Sale</button></div>';
+  if (lg.length) h += '<h2>Records</h2><div class="card list">' + lg.slice(0, 30).map(l => logRow(l, l.kind === 'eggs' ? fmtN(num(l.qty)) + ' eggs' + (num(l.broken) ? ', ' + fmtN(num(l.broken)) + ' broken' : '') : l.kind === 'deaths' ? plural(num(l.qty), 'death') : l.kind === 'feed' ? fmtN(num(l.qty)) + ' kg feed' : FLOCK_LOGS[l.kind], (l.kind === 'eggs' ? 'A.eggsDay(\'' + f.id + '\',\'' + l.id + '\')' : ['deaths', 'feed'].includes(l.kind) ? 'A.flockQty(\'' + l.kind + '\',\'' + f.id + '\',\'' + l.id + '\')' : 'A.flockEvent(\'' + l.id + '\')'))).join('') + '</div>';
+  return [f.name, h];
+};
+// a record's cost is kept as one linked expense, so Money always matches the record
+async function syncLogCost(l, ent, ref, cat, what) {
+  const old = D.expenses.find(e => e.log === l.id);
+  if (num(l.cost) > 0) await save('expenses', Object.assign(old || { id: uid(), side: 'farmer', log: l.id }, { ent, ref, cat, amount: num(l.cost), date: l.date, notes: what }));
+  else if (old) await remove('expenses', old.id);
+}
+async function delLog(store, id) { const e = D.expenses.find(x => x.log === id); if (e) await remove('expenses', e.id); await remove(store, id); }
+const cowOpts = () => cows().map(c => [c.id, c.name]);
+const flockOpts = () => activeFlocks().map(f => [f.id, f.name]);
+const animalActions = {
+  activities() {
+    const cur = ents();
+    const ov = sheet('What is on your farm?', '<p class="s" style="margin-top:0">Switch on everything you keep. Today and Money bring them together.</p><div class="chips" id="entChips">' + Object.keys(ENTS).map(e => '<button class="chip ' + (cur.includes(e) ? 'on' : '') + '" data-e="' + e + '" onclick="this.classList.toggle(\'on\')">' + ENTS[e][0] + ' ' + ENTS[e][1] + '</button>').join('') + '</div><div id="entMsg"></div><button class="btn pri wide" style="margin-top:16px" id="entSave">Save</button>');
+    ov.querySelector('#entSave').onclick = async () => {
+      const list = [...ov.querySelectorAll('#entChips .chip.on')].map(b => b.dataset.e);
+      if (!list.length) { ov.querySelector('#entMsg').innerHTML = '<div class="note bad" style="margin-top:10px">Pick at least one</div>'; return; }
+      const p = Object.assign({}, prof(), { activities: list });
+      if (p.role === 'propagator' && !list.includes('nursery')) p.role = 'farmer';
+      if (p.role === 'farmer' && !list.includes('crops') && !list.includes('dairy') && !list.includes('poultry')) p.role = 'propagator';
+      await setK('profile', p); closeSheet(false, ov); go('today'); toast('Farm updated');
+    };
+  },
+  editCow(id) {
+    const c = id ? byId('animals', id) : null, v = c || { status: 'milking' };
+    form(c ? 'Edit cow' : 'Add a cow', [
+      { k: 'name', l: 'Name', v: v.name, req: 1, ph: 'e.g. Neema' }, { k: 'tag', l: 'Ear tag (optional)', v: v.tag }, { k: 'breed', l: 'Breed', v: v.breed, list: ['Friesian', 'Ayrshire', 'Jersey', 'Guernsey', 'Sahiwal', 'Cross'] },
+      { k: 'status', l: 'Status', t: 'select', o: Object.entries(COW_STATUS), v: v.status }, { k: 'born', l: 'Date of birth (optional)', t: 'date', v: v.born }, { k: 'notes', l: 'Notes', v: v.notes }
+    ], async o => { await save('animals', Object.assign(c || { id: uid() }, o)); toast('Saved'); }, {
+      del: c ? async () => {
+        for (const m of D.milk.filter(x => x.animal === c.id)) await remove('milk', m.id);
+        for (const l of D.herdlog.filter(x => x.animal === c.id)) await delLog('herdlog', l.id);
+        await remove('animals', c.id); S.view = null;
+      } : null
+    });
+  },
+  milkDay(date) {
+    const list = cows().filter(c => c.status === 'milking');
+    if (!list.length) { toast('Add a milking cow first'); A.editCow(); return; }
+    const d = date || today(), rec = id => D.milk.find(m => m.animal === id && m.date === d) || {};
+    const fields = [{ k: 'date', l: 'Date', t: 'date', v: d, req: 1, hint: 'Morning and evening litres per cow' }];
+    list.forEach(c => { fields.push({ k: 'am_' + c.id, l: c.name + ' · morning (L)', t: 'num', v: rec(c.id).am }, { k: 'pm_' + c.id, l: c.name + ' · evening (L)', t: 'num', v: rec(c.id).pm }); });
+    form('Record milk', fields, async o => {
+      for (const c of list) {
+        const am = o['am_' + c.id], pm = o['pm_' + c.id], mid = c.id + '_' + o.date, old = byId('milk', mid);
+        if (am === '' && pm === '') { if (old) await remove('milk', mid); continue; }
+        if (num(am) < 0 || num(pm) < 0) throw new Error('Litres cannot be negative');
+        await save('milk', Object.assign(old || { id: mid, animal: c.id, date: o.date }, { am: num(am), pm: num(pm) }));
+      }
+      toast('Milk saved');
+    }, { onOpen: ov => on(ov, '#f_date', 'change', e => { const nd = e.target.value; if (nd) { closeSheet(false, ov); A.milkDay(nd); } }) });
+  },
+  herdEvent(id, cid) {
+    const l = id ? byId('herdlog', id) : null, opts = cowOpts();
+    if (!opts.length && !l) { toast('Add a cow first'); A.editCow(); return; }
+    const v = l || { animal: cid || opts[0][0], kind: 'service', date: today() };
+    if (l && !opts.some(o => o[0] === l.animal)) { const c0 = byId('animals', l.animal); opts.push([l.animal, c0 ? c0.name : 'Removed cow']); }
+    form(l ? 'Edit herd event' : 'Herd event', [
+      { k: 'animal', l: 'Cow', t: 'select', o: opts, v: v.animal }, { k: 'kind', l: 'What happened', t: 'select', o: Object.entries(HERD_EVENTS), v: v.kind }, { k: 'date', l: 'Date', t: 'date', v: v.date, req: 1 },
+      { k: 'cost', l: 'Cost (KSh)', t: 'num', v: v.cost }, { k: 'next', l: 'Next date (reminder)', t: 'date', v: v.next, hint: 'After a service, calving is estimated at ' + GESTATION_DAYS + ' days - change it if your vet advises differently' },
+      { k: 'nextWhat', l: 'Reminder for', v: v.nextWhat, ph: 'e.g. Calving due, booster' }, { k: 'withdraw', l: 'Do not sell milk until (if treated)', t: 'date', v: v.withdraw, hint: 'Take this from the medicine label or your vet' }, { k: 'notes', l: 'Notes', v: v.notes }
+    ], async o => {
+      if (o.next && l && o.next !== l.next) o.nextDone = false;
+      const r = await save('herdlog', Object.assign(l || { id: uid() }, o));
+      await syncLogCost(r, 'dairy', r.animal, ['vaccine', 'deworm', 'treat', 'vet'].includes(r.kind) ? 'Vet and medicine' : r.kind === 'service' ? 'AI / bull service' : 'Other', HERD_EVENTS[r.kind]);
+      if (r.kind === 'calving' || r.kind === 'dryoff') { const c = byId('animals', r.animal); if (c && !l) await save('animals', Object.assign(c, { status: r.kind === 'calving' ? 'milking' : 'dry' })); }
+      toast('Saved');
+    }, { del: l ? () => delLog('herdlog', l.id) : null, onOpen: ov => {
+      const fill = () => { if (!l && $('f_kind').value === 'service' && $('f_date').value) { $('f_next').value = addD($('f_date').value, GESTATION_DAYS); $('f_nextWhat').value = 'Calving due'; } };
+      on(ov, '#f_kind', 'change', fill); on(ov, '#f_date', 'change', fill); fill();
+    } });
+  },
+  editFlock(id) {
+    const f = id ? byId('flocks', id) : null, v = f || { type: 'layers', start: today() };
+    form(f ? 'Edit flock' : 'Add a flock', [
+      { k: 'name', l: 'Flock name', v: v.name, req: 1, ph: 'e.g. Layers house 1' }, { k: 'type', l: 'Type', t: 'select', o: Object.entries(FLOCK_TYPES), v: v.type }, { k: 'start', l: 'Date started', t: 'date', v: v.start, req: 1 },
+      { k: 'count', l: 'Number of birds at the start', t: 'num', v: v.count, req: 1 }, { k: 'closed', l: 'Status', t: 'select', o: [['', 'Active'], ['1', 'Finished']], v: v.closed ? '1' : '' }, { k: 'notes', l: 'Notes', v: v.notes }
+    ], async o => { if (num(o.count) <= 0) throw new Error('Enter the number of birds'); o.closed = !!o.closed; await save('flocks', Object.assign(f || { id: uid() }, o)); toast('Saved'); }, {
+      del: f ? async () => { for (const l of flockLogs(f.id)) await delLog('flocklog', l.id); await remove('flocks', f.id); S.view = null; } : null
+    });
+  },
+  eggsDay(fid, id) {
+    const l = id ? byId('flocklog', id) : null, opts = flockOpts();
+    if (!opts.length && !l) { toast('Add a flock first'); A.editFlock(); return; }
+    const v = l || { flock: fid || opts[0][0], date: today() };
+    form('Record eggs', [{ k: 'flock', l: 'Flock', t: 'select', o: opts, v: v.flock }, { k: 'date', l: 'Date', t: 'date', v: v.date, req: 1 }, { k: 'qty', l: 'Eggs collected', t: 'num', v: v.qty, req: 1 }, { k: 'broken', l: 'Of these, broken', t: 'num', v: v.broken }],
+      async o => { if (num(o.broken) > num(o.qty)) throw new Error('Broken eggs cannot be more than eggs collected'); await save('flocklog', Object.assign(l || { id: uid(), kind: 'eggs' }, o)); toast('Eggs saved'); }, { del: l ? () => delLog('flocklog', l.id) : null });
+  },
+  flockQty(kind, fid, id) {
+    const l = id ? byId('flocklog', id) : null, f = byId('flocks', fid), v = l || { date: today() };
+    const fields = [{ k: 'date', l: 'Date', t: 'date', v: v.date, req: 1 }, { k: 'qty', l: kind === 'feed' ? 'Feed used or bought (kg)' : 'Birds that died', t: 'num', v: v.qty, req: 1 }];
+    if (kind === 'feed') fields.push({ k: 'cost', l: 'Cost (KSh), if bought', t: 'num', v: v.cost });
+    fields.push({ k: 'notes', l: 'Notes', v: v.notes });
+    form(kind === 'feed' ? 'Feed · ' + f.name : 'Deaths · ' + f.name, fields, async o => {
+      if (kind === 'deaths' && num(o.qty) > flockCount(f) + num(l && l.qty)) throw new Error('That is more birds than this flock has');
+      const r = await save('flocklog', Object.assign(l || { id: uid(), kind, flock: fid }, o));
+      if (kind === 'feed') await syncLogCost(r, 'poultry', fid, 'Feed', fmtN(num(r.qty)) + ' kg feed');
+      toast('Saved');
+    }, { del: l ? () => delLog('flocklog', l.id) : null });
+  },
+  flockEvent(id, fid) {
+    const l = id ? byId('flocklog', id) : null, opts = flockOpts();
+    if (!opts.length && !l) { toast('Add a flock first'); A.editFlock(); return; }
+    const v = l || { flock: fid || opts[0][0], kind: 'vaccine', date: today() };
+    form(l ? 'Edit flock event' : 'Flock event', [
+      { k: 'flock', l: 'Flock', t: 'select', o: opts, v: v.flock }, { k: 'kind', l: 'What happened', t: 'select', o: Object.entries(FLOCK_LOGS), v: v.kind }, { k: 'date', l: 'Date', t: 'date', v: v.date, req: 1 }, { k: 'cost', l: 'Cost (KSh)', t: 'num', v: v.cost },
+      { k: 'next', l: 'Next date (reminder)', t: 'date', v: v.next }, { k: 'nextWhat', l: 'Reminder for', v: v.nextWhat, ph: 'e.g. Booster' }, { k: 'withdraw', l: 'Do not sell eggs or meat until (if treated)', t: 'date', v: v.withdraw, hint: 'Take this from the medicine label or your vet' }, { k: 'notes', l: 'Notes', v: v.notes }
+    ], async o => {
+      if (o.next && l && o.next !== l.next) o.nextDone = false;
+      const r = await save('flocklog', Object.assign(l || { id: uid() }, o));
+      await syncLogCost(r, 'poultry', r.flock, 'Vet and vaccines', FLOCK_LOGS[r.kind]); toast('Saved');
+    }, { del: l ? () => delLog('flocklog', l.id) : null });
+  },
+  async dueDone(store, id) { const l = byId(store, id); if (l) { await save(store, Object.assign(l, { nextDone: true })); render(); toast('Marked done'); } },
+  anSale(ent, ref, id) {
+    const s = id ? byId('sales', id) : null, dairy = ent === 'dairy', opts = [['', dairy ? 'Whole herd' : 'All flocks']].concat(dairy ? cowOpts() : flockOpts());
+    const v = s || { date: today(), pay: 'cash', ref: ref || '', unit: dairy ? 'litre' : 'tray' };
+    if (s && s.ref && !opts.some(o => o[0] === s.ref)) { const x = byId(dairy ? 'animals' : 'flocks', s.ref); opts.push([s.ref, x ? x.name : 'Removed']); }
+    form((s ? 'Edit ' : 'Record ') + (dairy ? 'dairy' : 'poultry') + ' sale', [
+      { k: 'ref', l: dairy ? 'Cow' : 'Flock', t: 'select', o: opts, v: v.ref }, { k: 'date', l: 'Date', t: 'date', v: v.date, req: 1 }, { k: 'unit', l: 'What was sold', t: 'select', o: dairy ? [['litre', 'Milk (litres)'], ['animal', 'Animal'], ['other', 'Other']] : [['tray', 'Eggs (trays)'], ['egg', 'Eggs (single)'], ['bird', 'Birds'], ['manure', 'Manure (bags)'], ['other', 'Other']], v: v.unit },
+      { k: 'qty', l: 'Quantity', t: 'num', v: v.qty }, { k: 'price', l: 'Price per unit (KSh)', t: 'num', v: v.price }, { k: 'total', l: 'Total (KSh)', t: 'num', v: s ? saleTotal(s) : '', req: 1 },
+      { k: 'buyer', l: 'Buyer', v: v.buyer, ph: dairy ? 'e.g. Co-op, neighbour' : 'e.g. Hotel, market' }, { k: 'phone', l: 'Buyer phone', t: 'tel', v: v.phone }, { k: 'pay', l: 'Paid by', t: 'select', o: [['cash', 'Cash'], ['mpesa', 'M-Pesa'], ['bank', 'Bank'], ['credit', 'Credit - will pay later']], v: v.pay }, { k: 'paid', l: 'Amount paid now (KSh)', t: 'num', v: v.pay === 'credit' ? v.paid : '' }, { k: 'notes', l: 'Notes / M-Pesa code', v: v.notes }
+    ], async o => {
+      if (o.pay === 'credit' && !o.buyer) throw new Error('Enter the buyer\'s name for a credit sale');
+      if (o.unit === 'bird' && !o.ref) throw new Error('Choose the flock these birds came from');
+      if (o.unit === 'bird') { const f = byId('flocks', o.ref), was = s && s.unit === 'bird' && s.ref === o.ref ? num(s.qty) : 0; if (f && num(o.qty) > flockCount(f) + was) throw new Error('That is more birds than this flock has'); }
+      if (o.pay !== 'credit') o.paid = '';
+      await save('sales', Object.assign(s || { id: uid(), side: 'farmer', ent }, o)); toast('Sale recorded');
+    }, { del: s ? () => remove('sales', s.id) : null, onOpen: ov => {
+      const tot = () => { const q = num($('f_qty').value), pr = num($('f_price').value); if (q && pr) $('f_total').value = Math.round(q * pr * 100) / 100; };
+      const pay = () => $('w_paid').classList.toggle('hide', $('f_pay').value !== 'credit');
+      on(ov, '#f_qty', 'input', tot); on(ov, '#f_price', 'input', tot); on(ov, '#f_pay', 'change', pay); pay();
+    } });
+  },
+  anCost(ent, ref, id) {
+    const e = id ? byId('expenses', id) : null, dairy = ent === 'dairy';
+    if (e && e.log) { if (byId('herdlog', e.log)) A.herdEvent(e.log); else { const fl = byId('flocklog', e.log); if (fl && fl.kind === 'feed') A.flockQty('feed', fl.flock, fl.id); else A.flockEvent(e.log); } toast('This cost belongs to that record - change it there'); return; }
+    const cats = (dairy ? DAIRY_COSTS : POULTRY_COSTS).slice(), opts = [['', dairy ? 'Whole herd' : 'All flocks']].concat(dairy ? cowOpts() : flockOpts()), v = e || { date: today(), ref: ref || '', cat: cats[0] };
+    if (v.cat && !cats.includes(v.cat)) cats.push(v.cat);
+    if (e && e.ref && !opts.some(o => o[0] === e.ref)) opts.push([e.ref, 'Removed']);
+    form((e ? 'Edit ' : 'Record ') + (dairy ? 'dairy' : 'poultry') + ' cost', [{ k: 'ref', l: dairy ? 'Cow' : 'Flock', t: 'select', o: opts, v: v.ref }, { k: 'cat', l: 'Type of cost', t: 'select', o: cats, v: v.cat }, { k: 'amount', l: 'Amount (KSh)', t: 'num', v: v.amount, req: 1 }, { k: 'date', l: 'Date', t: 'date', v: v.date, req: 1 }, { k: 'notes', l: 'Notes', v: v.notes }],
+      async o => { await save('expenses', Object.assign(e || { id: uid(), side: 'farmer', ent }, o)); toast('Cost recorded'); }, { del: e ? () => remove('expenses', e.id) : null });
+  }
+};
+
+const TABS = { today: () => isProp() ? todayProp() : todayFarmer(), crops: cropsTab, doctor: doctorTab, money: moneyTab, more: moreTab, batches: batchesTab, orders: ordersTab, animals: animalsTab };
 
 // ================= actions =================
 // crop pickers show only the crops this farm chose, plus any crop an existing record already uses
@@ -656,7 +919,7 @@ const A = window.A = {
   async wDone() {
     const name = $('f_w_name').value.trim(); if (!name) { $('wMsg').innerHTML = '<div class="note bad">Please enter your name</div>'; return; }
     const crops = [...document.querySelectorAll('#wCrops .chip.on')].map(b => b.dataset.c);
-    await setK('profile', { role: W.role, name, farm: $('f_w_farm').value.trim(), county: $('f_w_county').value.trim(), phone: $('f_w_phone').value.trim(), crops, since: today() });
+    await setK('profile', { role: W.role, name, farm: $('f_w_farm').value.trim(), county: $('f_w_county').value.trim(), phone: $('f_w_phone').value.trim(), crops, since: today(), activities: [W.role === 'farmer' ? 'crops' : 'nursery'].concat([...document.querySelectorAll('#wEnts .chip.on')].map(b => b.dataset.e)) });
     S.tab = 'today'; render(); toast('Welcome to Farm on the Go');
   },
   profile() {
@@ -782,6 +1045,7 @@ const A = window.A = {
   newSale(pid, bid, pre) { A.editSale(null, pid, bid, pre); },
   editSale(id, pid, bid, pre) {
     const s = id ? byId('sales', id) : null, prop = isProp();
+    if (s && s.ent) return A.anSale(s.ent, null, s.id);
     const v = s || Object.assign({ date: today(), pay: 'cash', pid: pid || '', batch: bid || '' }, pre || {});
     if (!s && prop && v.batch && !v.price) v.price = (byId('batches', v.batch) || {}).price;
     const p0 = v.pid && byId('plantings', v.pid), c = crop(p0 ? p0.crop : '');
@@ -819,6 +1083,7 @@ const A = window.A = {
   newExpense(pid, bid) { A.editExpense(null, pid, bid); },
   editExpense(id, pid, bid) {
     const e = id ? byId('expenses', id) : null, prop = isProp(), v = e || { date: today(), pid: pid || '', batch: bid || '', cat: prop ? NURSERY_COSTS[0] : FARM_COSTS[0] };
+    if (e && e.ent) return A.anCost(e.ent, null, e.id);
     if (e && e.act) { toast('This cost belongs to an activity record - edit it there'); A.editAct(e.act); return; }
     const cats = (prop ? NURSERY_COSTS : FARM_COSTS); if (v.cat && !cats.includes(v.cat)) cats.push(v.cat);
     form(e ? 'Edit expense' : 'Record an expense', [
@@ -1006,6 +1271,7 @@ const A = window.A = {
     Object.keys(K).forEach(k => delete K[k]); await loadAll(); closeAll(); go('today'); toast('Records restored');
   }
 };
+Object.assign(A, animalActions);
 function replyBox(o, msg, title) {
   sheet(title, '<p class="s" style="margin-top:0">Let ' + esc(o.name) + ' know:</p><div class="note">' + esc(msg) + '</div>' + (o.phone ? '<a class="btn ok wide" target="_blank" rel="noopener" href="' + waLink(o.phone, msg) + '">💬 Send on WhatsApp</a><div style="height:8px"></div><a class="btn wide" href="sms:' + esc(o.phone) + '?body=' + encodeURIComponent(msg) + '">✉️ Send as SMS</a>' : '<div class="s">No phone number saved for this farmer.</div>'), { noFocus: true });
 }
@@ -1051,6 +1317,200 @@ function initSW() {
   try { await openDB(); await loadAll(); } catch (e) { $('main').innerHTML = '<div class="note bad" style="margin:20px">This phone\'s browser storage is not available (' + esc(e.message || e) + '). Open the app in Chrome, not in a private window.</div>'; return; }
   if (K.lock) LOCKED = true;
   render(); initSW(); setTimeout(() => remindNow(false), 2500);
+  try { initSync(); } catch (e) {}
   setInterval(() => { if (!sheetStack.length && !(document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName))) render(); }, 10 * 60 * 1000);
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
 })();
+
+// ================= cloud sync + account (phone + PIN) =================
+// Offline-first: the app always works on this phone. When signed in and online, records
+// sync to Farm on the Go's backend so they survive a lost phone and reach the farmer's other
+// devices. Each farm is isolated by the login token (see farm-auth / RLS). No dependency libs.
+const SB_URL = 'https://zvptfimvfnptweaexmse.supabase.co';
+const SB_KEY = 'sb_publishable_TZ5e7kSlOu7DqUBnAXZJqw_1IUkJ4MT';
+const SYNC_STORES = STORES.filter(s => s !== 'kv');                 // data tables
+const KV_LOCAL = ['_session', '_sync', 'notify', 'lock', 'theme']; // never leave this phone
+const stripMeta = o => { const c = { ...o }; delete c._d; delete c._rev; return c; };
+let SY = { session: null, busy: false, timer: 0, lastOk: 0, lastErr: '' };
+
+// tombstones + cursors live in their own object store (added at DB v3)
+const sput = (rec) => idb('_sync', 'readwrite', o => o.put(rec));
+const sdel = (id) => idb('_sync', 'readwrite', o => o.delete(id));
+const sall = () => idb('_sync', 'readonly', o => o.getAll());
+
+function sess() { return SY.session; }
+async function setSession(s) { SY.session = s; await setK('_session', s); updateSyncUI(); }
+async function signOut() { SY.session = null; await setK('_session', null); updateSyncUI(); try { closeAll(); } catch (e) {} toast('Signed out - records stay on this phone'); }
+async function freshToken() {
+  const s = sess(); if (!s) return null;
+  if (s.expires_at && s.expires_at * 1000 > Date.now() + 60000) return s.access_token;
+  try {
+    const r = await fetch(SB_URL + '/auth/v1/token?grant_type=refresh_token', {
+      method: 'POST', headers: { apikey: SB_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: s.refresh_token }),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.access_token) throw new Error(j.error_description || j.msg || 'refresh failed');
+    const ns = { access_token: j.access_token, refresh_token: j.refresh_token || s.refresh_token, expires_at: j.expires_at || Math.floor(Date.now() / 1000) + (j.expires_in || 3600), farm_id: s.farm_id, name: s.name };
+    await setSession(ns); return ns.access_token;
+  } catch (e) { SY.lastErr = String(e.message || e); return null; }
+}
+
+async function farmAuth(action, phone, pin, extra) {
+  const r = await fetch(SB_URL + '/functions/v1/farm-auth', {
+    method: 'POST', headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify(Object.assign({ action, phone, pin }, extra || {})),
+  });
+  let j = {}; try { j = await r.json(); } catch (e) {}
+  return { status: r.status, ...j };
+}
+
+async function sb(path, opts) {
+  const tok = await freshToken(); if (!tok) throw new Error('not signed in');
+  const r = await fetch(SB_URL + '/rest/v1/' + path, Object.assign({}, opts, {
+    headers: Object.assign({ apikey: SB_KEY, Authorization: 'Bearer ' + tok }, (opts && opts.headers) || {}),
+  }));
+  if (!r.ok) throw new Error('rest ' + r.status + ' ' + (await r.text()).slice(0, 120));
+  const t = await r.text(); return t ? JSON.parse(t) : null;
+}
+
+// mark everything already on this phone as needing upload (first sign-in on a device)
+async function markAllDirty() {
+  for (const s of SYNC_STORES) for (const rec of D[s]) { rec._d = rec.updated_at || new Date().toISOString(); await idb(s, 'readwrite', o => o.put(rec)); }
+  for (const k of Object.keys(K)) if (!KV_LOCAL.includes(k) && k[0] !== '_') { const rec = { id: k, v: K[k], _d: new Date().toISOString() }; await idb('kv', 'readwrite', o => o.put(rec)); }
+}
+
+// push local changes up
+async function pushChanges() {
+  const fid = sess().farm_id;
+  for (const s of SYNC_STORES) {
+    const dirty = D[s].filter(r => r._d);
+    const tombs = (await sall()).filter(t => t.store === s);
+    const rows = dirty.map(r => ({ farm_id: fid, id: r.id, doc: stripMeta(r), deleted: false }))
+      .concat(tombs.map(t => ({ farm_id: fid, id: t.rid, doc: t.doc || {}, deleted: true })));
+    if (!rows.length) continue;
+    await sb(s + '?on_conflict=farm_id,id', { method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' }, body: JSON.stringify(rows) });
+    for (const r of dirty) { delete r._d; await idb(s, 'readwrite', o => o.put(r)); }
+    for (const t of tombs) await sdel(t.id);
+  }
+  const kvRec = await idb('kv', 'readonly', o => o.getAll());
+  const kvDirty = kvRec.filter(r => r._d && !KV_LOCAL.includes(r.id) && r.id[0] !== '_');
+  if (kvDirty.length) {
+    const rows = kvDirty.map(r => ({ farm_id: fid, id: r.id, doc: { v: r.v }, deleted: false }));
+    await sb('kv?on_conflict=farm_id,id', { method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' }, body: JSON.stringify(rows) });
+    for (const r of kvDirty) { delete r._d; await idb('kv', 'readwrite', o => o.put(r)); }
+  }
+}
+
+// pull remote changes down (by rev cursor per store)
+async function pullChanges() {
+  const fid = sess().farm_id;
+  const cursors = (await idb('_sync', 'readonly', o => o.get('cursors')))?.v || {};
+  let changed = false;
+  for (const s of STORES) {
+    let cur = cursors[s] || 0, more = true;
+    while (more) {
+      const rows = await sb(s + '?farm_id=eq.' + fid + '&rev=gt.' + cur + '&order=rev.asc&limit=500&select=id,doc,deleted,rev,updated_at');
+      if (!rows || !rows.length) break;
+      for (const row of rows) {
+        cur = Math.max(cur, row.rev);
+        if (s === 'kv') {
+          if (row.deleted) { if (!KV_LOCAL.includes(row.id)) { delete K[row.id]; await idb('kv', 'readwrite', o => o.delete(row.id)); changed = true; } continue; }
+          if (KV_LOCAL.includes(row.id)) continue;
+          K[row.id] = row.doc.v; await idb('kv', 'readwrite', o => o.put({ id: row.id, v: row.doc.v })); changed = true; continue;
+        }
+        const local = byId(s, row.id);
+        if (row.deleted) { if (local) { D[s] = D[s].filter(x => x.id !== row.id); await idb(s, 'readwrite', o => o.delete(row.id)); changed = true; } continue; }
+        // last-write-wins: keep local only if it is dirty AND newer
+        if (local && local._d && (local.updated_at || '') > (row.updated_at || '')) continue;
+        const rec = Object.assign({}, row.doc, { id: row.id, updated_at: row.updated_at, _rev: row.rev });
+        const i = D[s].findIndex(x => x.id === row.id); if (i >= 0) D[s][i] = rec; else D[s].push(rec);
+        await idb(s, 'readwrite', o => o.put(rec)); changed = true;
+      }
+      cursors[s] = cur; more = rows.length === 500;
+    }
+  }
+  await sput({ id: 'cursors', v: cursors });
+  return changed;
+}
+
+async function syncNow(silent) {
+  if (!sess() || SY.busy || !navigator.onLine) { if (!silent && !navigator.onLine) toast('No internet - will sync when back online'); return; }
+  SY.busy = true; updateSyncUI();
+  try {
+    await pushChanges();
+    const changed = await pullChanges();
+    SY.lastOk = Date.now(); SY.lastErr = '';
+    if (changed && !sheetStack.length) render();
+    if (!silent) toast('Synced');
+  } catch (e) {
+    SY.lastErr = String(e.message || e);
+    if (!silent) toast('Sync failed - will retry');
+  } finally { SY.busy = false; updateSyncUI(); }
+}
+const scheduleSync = () => { clearTimeout(SY.timer); SY.timer = setTimeout(() => syncNow(true), 2500); };
+
+// account card shown at the top of the More tab
+function accountCardHtml() {
+  const on = !!sess();
+  const title = on ? esc((sess().name) || 'My farm') : 'Back up &amp; sync';
+  const sub = on ? (SY.lastErr ? '&#9888;&#65039; sync problem - tap to retry' : (SY.lastOk ? 'Backed up &middot; ' + new Date(SY.lastOk).toLocaleTimeString() : 'Signed in &middot; backing up...')) : 'Create an account so your records are safe';
+  const em = on ? (SY.busy ? '&#128260;' : (SY.lastErr ? '&#9888;&#65039;' : '&#9729;&#65039;')) : '&#9729;&#65039;';
+  return '<div class="card"><div class="li" style="cursor:pointer" onclick="A.account()"><div class="em">' + em + '</div><div class="grow"><div class="t">' + title + '</div><div class="s">' + sub + '</div></div><span class="xs">&rsaquo;</span></div></div>';
+}
+
+// account UI
+function accountSheet() {
+  if (sess()) {
+    const s = sess();
+    sheet('Your account', '<div class="card"><div class="row"><div class="em">&#9729;&#65039;</div><div class="grow"><div class="t">' + esc(s.name || 'My farm') + '</div><div class="s">Signed in &middot; records back up automatically</div></div></div></div>' +
+      '<div id="accMsg" class="s" style="text-align:center;margin:10px 0">' + (SY.lastErr ? '&#9888;&#65039; ' + esc(SY.lastErr).slice(0, 60) : (SY.lastOk ? 'Last sync ' + new Date(SY.lastOk).toLocaleTimeString() : 'Not synced yet')) + '</div>' +
+      '<button class="btn pri wide" onclick="A.syncNow()">Sync now</button><div style="height:8px"></div><button class="btn wide" onclick="A.signOut()">Sign out</button>', { noFocus: true });
+    return;
+  }
+  sheet('Back up &amp; sync', '<p class="s" style="margin-top:0">Create an account or sign in with your phone number and a PIN. Your records back up to the cloud and reach your other phones. The app keeps working offline.</p>' +
+    '<button class="btn pri wide" onclick="A.authForm(\'register\')">Create an account</button><div style="height:8px"></div><button class="btn wide" onclick="A.authForm(\'login\')">I already have one</button>', { noFocus: true });
+}
+function authForm(mode) {
+  const reg = mode === 'register', p = prof();
+  const body = (reg ? '<div class="fld"><span>Your name</span><input id="auName" value="' + esc(p.name || '') + '" maxlength="80"></div>' : '') +
+    '<div class="fld"><span>Phone number</span><input id="auPhone" type="tel" inputmode="tel" placeholder="07xx xxx xxx" value="' + esc(p.phone || '') + '"></div>' +
+    '<div class="fld"><span>PIN (4 to 6 digits)</span><input id="auPin" type="password" inputmode="numeric" maxlength="6"></div>' +
+    (reg ? '<div class="fld"><span>Repeat PIN</span><input id="auPin2" type="password" inputmode="numeric" maxlength="6"></div>' : '') +
+    '<div id="auMsg"></div><button class="btn pri wide" id="auGo">' + (reg ? 'Create account' : 'Sign in') + '</button>';
+  const ov = sheet(reg ? 'Create an account' : 'Sign in', body, { noFocus: true });
+  ov.querySelector('#auGo').onclick = async () => {
+    const set = m => { ov.querySelector('#auMsg').innerHTML = '<div class="note bad">' + esc(m) + '</div>'; };
+    const phone = ($('auPhone').value || '').trim(), pin = ($('auPin').value || '').trim();
+    if (!/^[0-9+\s]{9,}$/.test(phone)) return set('Enter a valid phone number');
+    if (!/^\d{4,6}$/.test(pin)) return set('PIN must be 4 to 6 digits');
+    if (reg && pin !== ($('auPin2').value || '').trim()) return set('The two PINs do not match');
+    if (!navigator.onLine) return set('You need internet to set up the account the first time');
+    const go2 = ov.querySelector('#auGo'); go2.disabled = true; go2.textContent = 'Please wait...';
+    const name = reg ? ($('auName').value || '').trim() : '';
+    const activities = (prof().activities) || [isProp() ? 'nursery' : 'crops'];
+    let res; try { res = await farmAuth(mode, phone, pin, reg ? { name, activities } : {}); } catch (e) { res = { ok: false, code: 'network' }; }
+    if (!res.ok) {
+      const msg = { phone_taken: 'That phone already has an account - sign in instead', not_found: 'No account for that phone - create one', bad_pin: 'Wrong PIN', bad_phone: 'Enter a valid phone number', forbidden_origin: 'This copy of the app is not allowed', network: 'No internet - try again' }[res.code] || ('Could not ' + (reg ? 'create account' : 'sign in'));
+      go2.disabled = false; go2.textContent = reg ? 'Create account' : 'Sign in';
+      return set(msg);
+    }
+    await setSession({ ...res.session, farm_id: res.farm.id, name: res.farm.name || name });
+    await markAllDirty();
+    closeAll();
+    toast(reg ? 'Account created' : 'Signed in');
+    await syncNow(false);
+  };
+}
+function updateSyncUI() { const b = $('syncDot'); if (b) b.textContent = !sess() ? '' : SY.busy ? '🔄' : SY.lastErr ? '⚠️' : '☁️'; try { if (sheetStack.length) { const m = $('accMsg'); if (m) m.innerHTML = SY.lastErr ? '⚠️ ' + esc(SY.lastErr).slice(0, 60) : (SY.lastOk ? 'Last sync ' + new Date(SY.lastOk).toLocaleTimeString() : 'Not synced yet'); } } catch (e) {} }
+
+async function initSync() {
+  try { const s = (typeof K !== 'undefined') ? K['_session'] : null; if (s) SY.session = s; } catch (e) {}
+  updateSyncUI();
+  window.addEventListener('online', () => syncNow(true));
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(true); });
+  setInterval(() => syncNow(true), 60000);
+  if (sess()) syncNow(true);
+}
+
+try { Object.assign(window.A, { account: accountSheet, accountSheet, authForm, syncNow, signOut, scheduleSync }); } catch (e) {}
