@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>DukaGO · Installs</title>
+<style>
+  :root{--bg:#0e1512;--card:#18221e;--line:#26332d;--text:#eef5f1;--muted:#a9b8b0;--accent:#e8a33d;--farm:#5bbf72;--pos:#e8a33d;--clinic:#5aa9e6;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh}
+  .wrap{max-width:1000px;margin:0 auto;padding:24px 16px 60px}
+  h1{font-size:22px;margin:0;letter-spacing:-.3px}
+  .sub{color:var(--muted);font-size:13px;margin-top:2px}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+  .btn{border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:10px;padding:9px 14px;font-size:14px;cursor:pointer}
+  .btn:hover{border-color:var(--accent)}
+  .btn.pri{background:var(--accent);color:#1a1205;border-color:var(--accent);font-weight:600}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}
+  .c{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .c .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  .c .v{font-size:28px;font-weight:700;margin-top:4px}
+  .c .v small{font-size:13px;font-weight:500;color:var(--muted)}
+  .chart{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:20px}
+  .bars{display:flex;align-items:flex-end;gap:3px;height:90px;margin-top:10px}
+  .bar{flex:1;background:var(--accent);border-radius:3px 3px 0 0;min-height:2px;opacity:.85}
+  .bar:hover{opacity:1}
+  .barwrap{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px}
+  .barlbl{font-size:9px;color:var(--muted);white-space:nowrap}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  input,select{background:var(--card);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:9px 12px;font-size:14px}
+  input{flex:1;min-width:140px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px;position:sticky;top:0;background:var(--bg)}
+  .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600}
+  .t-farm{background:rgba(91,191,114,.18);color:var(--farm)}
+  .t-pos{background:rgba(232,163,61,.18);color:var(--pos)}
+  .t-clinic{background:rgba(90,169,230,.18);color:var(--clinic)}
+  .ev{color:var(--muted);font-size:12px}
+  .gate{max-width:360px;margin:12vh auto 0;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;text-align:center}
+  .gate h1{margin-bottom:6px}
+  .gate input{width:100%;margin:14px 0;text-align:center;letter-spacing:2px}
+  .gate .btn{width:100%}
+  .err{color:#ff8f8f;font-size:13px;min-height:18px;margin-top:8px}
+  .muted{color:var(--muted)}
+  .empty{text-align:center;color:var(--muted);padding:40px 0}
+  @media(prefers-color-scheme:light){:root{--bg:#f6f8f7;--card:#fff;--line:#dfe6e2;--text:#13201a;--muted:#56655e}.btn.pri{color:#fff}}
+</style>
+</head>
+<body>
+<div id="gate" class="gate">
+  <h1>DukaGO Installs</h1>
+  <div class="sub">Private — enter your admin passphrase</div>
+  <input id="key" type="password" placeholder="passphrase" autocomplete="current-password">
+  <button class="btn pri" id="go">Open</button>
+  <div class="err" id="gerr"></div>
+</div>
+
+<div id="app" class="wrap" style="display:none">
+  <header>
+    <div><h1>Installs &amp; first-opens</h1><div class="sub" id="subt">across Farm, POS and Clinic</div></div>
+    <div><button class="btn" id="refresh">Refresh</button> <button class="btn" id="out">Lock</button></div>
+  </header>
+  <div class="cards" id="cards"></div>
+  <div class="chart"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.4px">Last 30 days</div><div class="bars" id="bars"></div></div>
+  <div class="controls">
+    <input id="q" placeholder="Search account, city, device…">
+    <select id="fapp"><option value="">All apps</option><option value="farm">Farm</option><option value="pos">POS</option><option value="clinic">Clinic</option></select>
+  </div>
+  <div style="overflow:auto;max-height:60vh;border:1px solid var(--line);border-radius:14px">
+    <table><thead><tr><th>App</th><th>Event</th><th>Account</th><th>Location</th><th>When</th></tr></thead><tbody id="rows"></tbody></table>
+  </div>
+  <p class="muted" style="font-size:12px;margin-top:14px">Device IDs are random per-device tokens, not personal data. One row per device per app per event.</p>
+</div>
+
+<script>
+const FN='https://duoshfyiiplvtoasxghn.supabase.co/functions/v1/install-admin';
+const IKEY='sb_publishable_TLFyMJjbKSyTKmVOJEb0Ug_zDl9CuLX';
+const $=id=>document.getElementById(id);
+let DATA=null;
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const names={farm:'Farm',pos:'POS',clinic:'Clinic'};
+function when(iso){const d=new Date(iso),now=Date.now(),s=(now-d)/1000;if(s<60)return 'just now';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';if(s<604800)return Math.floor(s/86400)+'d ago';return d.toLocaleDateString('en-KE');}
+async function load(key){
+  const r=await fetch(FN,{method:'POST',headers:{apikey:IKEY,Authorization:'Bearer '+IKEY,'Content-Type':'application/json'},body:JSON.stringify({key})});
+  if(r.status===401){throw new Error('Wrong passphrase');}
+  if(!r.ok){throw new Error('Could not load ('+r.status+')');}
+  return r.json();
+}
+function render(){
+  const d=DATA;
+  $('cards').innerHTML=[
+    ['Total',d.total],['Last 7 days',d.last7],['Farm',d.byApp.farm||0],['POS',d.byApp.pos||0],['Clinic',d.byApp.clinic||0]
+  ].map(([k,v])=>`<div class="c"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  const max=Math.max(1,...d.days.map(x=>x.n));
+  $('bars').innerHTML=d.days.map(x=>`<div class="barwrap" title="${x.d}: ${x.n}"><div class="bar" style="height:${Math.round(x.n/max*100)}%"></div><div class="barlbl">${x.d.slice(5)}</div></div>`).join('')||'<div class="muted">No data yet</div>';
+  table();
+}
+function table(){
+  const q=($('q').value||'').toLowerCase(), fa=$('fapp').value;
+  const rows=DATA.rows.filter(r=>(!fa||r.app===fa)&&(!q||JSON.stringify(r).toLowerCase().includes(q)));
+  $('subt').textContent=rows.length+' of '+DATA.total+' records';
+  $('rows').innerHTML=rows.length?rows.map(r=>`<tr>
+    <td><span class="tag t-${r.app}">${names[r.app]||r.app}</span></td>
+    <td class="ev">${r.event==='installed'?'installed':'first open'}</td>
+    <td>${esc(r.account)||'<span class="muted">—</span>'}</td>
+    <td>${esc([r.city,r.country].filter(Boolean).join(', '))||'<span class="muted">—</span>'}</td>
+    <td title="${esc(r.created_at)}">${when(r.created_at)}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">No matching records</td></tr>';
+}
+async function enter(key){
+  try{ DATA=await load(key); localStorage.setItem('dg_admin',key); $('gate').style.display='none'; $('app').style.display='block'; render(); }
+  catch(e){ $('gerr').textContent=e.message; }
+}
+$('go').onclick=()=>enter($('key').value.trim());
+$('key').addEventListener('keydown',e=>{if(e.key==='Enter')$('go').click();});
+$('refresh').onclick=async()=>{try{DATA=await load(localStorage.getItem('dg_admin'));render();}catch(e){location.reload();}};
+$('out').onclick=()=>{localStorage.removeItem('dg_admin');location.reload();};
+$('q').addEventListener('input',table); $('fapp').addEventListener('change',table);
+const saved=localStorage.getItem('dg_admin'); if(saved) enter(saved);
+</script>
+</body>
+</html>
