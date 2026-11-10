@@ -30,8 +30,8 @@ const STORES = ['kv', 'fields', 'plantings', 'acts', 'harvests', 'sales', 'expen
 let db; const D = {}; const K = {};
 function openDB() {
   return new Promise((res, rej) => {
-    const r = indexedDB.open(DBN, 2);
-    r.onupgradeneeded = () => { const d = r.result; STORES.forEach(s => { if (!d.objectStoreNames.contains(s)) d.createObjectStore(s, { keyPath: 'id' }); }); };
+    const r = indexedDB.open(DBN, 3);
+    r.onupgradeneeded = () => { const d = r.result; STORES.forEach(s => { if (!d.objectStoreNames.contains(s)) d.createObjectStore(s, { keyPath: 'id' }); }); if (!d.objectStoreNames.contains('_sync')) d.createObjectStore('_sync', { keyPath: 'id' }); };
     r.onsuccess = () => { db = r.result; res(); }; r.onerror = () => rej(r.error);
   });
 }
@@ -41,11 +41,12 @@ async function loadAll() {
 }
 async function save(s, obj) {
   obj.updated_at = new Date().toISOString();
+  obj._d = obj.updated_at;                       // mark dirty for cloud sync
   const a = D[s], i = a.findIndex(x => x.id === obj.id); if (i >= 0) a[i] = obj; else a.push(obj);
-  await idb(s, 'readwrite', o => o.put(obj)); return obj;
+  await idb(s, 'readwrite', o => o.put(obj)); if (typeof scheduleSync === 'function') scheduleSync(); return obj;
 }
-async function remove(s, id) { D[s] = D[s].filter(x => x.id !== id); await idb(s, 'readwrite', o => o.delete(id)); }
-async function setK(k, v) { K[k] = v; await idb('kv', 'readwrite', o => o.put({ id: k, v })); }
+async function remove(s, id) { const rec = D[s].find(x => x.id === id); try { if (s !== 'kv') await idb('_sync', 'readwrite', o => o.put({ id: 'tomb:' + s + ':' + id, store: s, rid: id, doc: { id: id }, _ts: new Date().toISOString() })); } catch (e) {} D[s] = D[s].filter(x => x.id !== id); await idb(s, 'readwrite', o => o.delete(id)); if (typeof scheduleSync === 'function') scheduleSync(); }
+async function setK(k, v) { K[k] = v; const loc = (typeof KV_LOCAL !== 'undefined' && KV_LOCAL.includes(k)) || k[0] === '_'; const rec = { id: k, v }; if (!loc) rec._d = new Date().toISOString(); await idb('kv', 'readwrite', o => o.put(rec)); if (!loc && typeof scheduleSync === 'function') scheduleSync(); }
 const byId = (s, id) => D[s].find(x => x.id === id);
 const prof = () => K.profile || {};
 const isProp = () => prof().role === 'propagator';
@@ -529,6 +530,7 @@ function moreTab() {
   const p = prof(), prop = isProp();
   const item = (em, t, s, fn) => '<div class="li" style="cursor:pointer" onclick="' + fn + '"><div class="em">' + em + '</div><div class="grow"><div class="t">' + t + '</div><div class="s">' + s + '</div></div><span class="xs">›</span></div>';
   let h = '<div class="card"><div class="row"><div class="em">' + (prop ? '🌱' : '🧑‍🌾') + '</div><div class="grow"><div class="t">' + esc(p.name || '') + '</div><div class="s">' + esc(p.farm || '') + (p.county ? ' · ' + esc(p.county) : '') + '</div></div><button class="btn sm" onclick="A.profile()">Edit</button></div></div>';
+  h += (typeof accountCardHtml === 'function' ? accountCardHtml() : '');
   h += '<div class="card list">' + item('🚜', 'What is on your farm', ents().map(e => ENTS[e][1]).join(', '), 'A.activities()') + (prop || !hasAnimals() || !hasEnt('crops') ? '' : item('🩺', 'Plant doctor', 'Check sick plants', 'A.go(\'doctor\')')) + (prop ? '' : item('🗺️', 'Fields and blocks', 'Where each crop is planted', 'A.fields()') + item('🌱', 'Seedlings I ordered', 'Know when they are ready to plant', 'A.seedOrders()')) +
     (prop ? item('🩺', 'Plant doctor', 'Check sick seedlings', 'A.go(\'doctor\')') : '') +
     item('🌱', 'My crops', (prof().crops || []).map(c0).join(', ') || 'All crops', 'A.myCrops()') +
@@ -1315,6 +1317,200 @@ function initSW() {
   try { await openDB(); await loadAll(); } catch (e) { $('main').innerHTML = '<div class="note bad" style="margin:20px">This phone\'s browser storage is not available (' + esc(e.message || e) + '). Open the app in Chrome, not in a private window.</div>'; return; }
   if (K.lock) LOCKED = true;
   render(); initSW(); setTimeout(() => remindNow(false), 2500);
+  try { initSync(); } catch (e) {}
   setInterval(() => { if (!sheetStack.length && !(document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName))) render(); }, 10 * 60 * 1000);
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
 })();
+
+// ================= cloud sync + account (phone + PIN) =================
+// Offline-first: the app always works on this phone. When signed in and online, records
+// sync to Farm on the Go's backend so they survive a lost phone and reach the farmer's other
+// devices. Each farm is isolated by the login token (see farm-auth / RLS). No dependency libs.
+const SB_URL = 'https://zvptfimvfnptweaexmse.supabase.co';
+const SB_KEY = 'sb_publishable_TZ5e7kSlOu7DqUBnAXZJqw_1IUkJ4MT';
+const SYNC_STORES = STORES.filter(s => s !== 'kv');                 // data tables
+const KV_LOCAL = ['_session', '_sync', 'notify', 'lock', 'theme']; // never leave this phone
+const stripMeta = o => { const c = { ...o }; delete c._d; delete c._rev; return c; };
+let SY = { session: null, busy: false, timer: 0, lastOk: 0, lastErr: '' };
+
+// tombstones + cursors live in their own object store (added at DB v3)
+const sput = (rec) => idb('_sync', 'readwrite', o => o.put(rec));
+const sdel = (id) => idb('_sync', 'readwrite', o => o.delete(id));
+const sall = () => idb('_sync', 'readonly', o => o.getAll());
+
+function sess() { return SY.session; }
+async function setSession(s) { SY.session = s; await setK('_session', s); updateSyncUI(); }
+async function signOut() { SY.session = null; await setK('_session', null); updateSyncUI(); try { closeAll(); } catch (e) {} toast('Signed out - records stay on this phone'); }
+async function freshToken() {
+  const s = sess(); if (!s) return null;
+  if (s.expires_at && s.expires_at * 1000 > Date.now() + 60000) return s.access_token;
+  try {
+    const r = await fetch(SB_URL + '/auth/v1/token?grant_type=refresh_token', {
+      method: 'POST', headers: { apikey: SB_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: s.refresh_token }),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.access_token) throw new Error(j.error_description || j.msg || 'refresh failed');
+    const ns = { access_token: j.access_token, refresh_token: j.refresh_token || s.refresh_token, expires_at: j.expires_at || Math.floor(Date.now() / 1000) + (j.expires_in || 3600), farm_id: s.farm_id, name: s.name };
+    await setSession(ns); return ns.access_token;
+  } catch (e) { SY.lastErr = String(e.message || e); return null; }
+}
+
+async function farmAuth(action, phone, pin, extra) {
+  const r = await fetch(SB_URL + '/functions/v1/farm-auth', {
+    method: 'POST', headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify(Object.assign({ action, phone, pin }, extra || {})),
+  });
+  let j = {}; try { j = await r.json(); } catch (e) {}
+  return { status: r.status, ...j };
+}
+
+async function sb(path, opts) {
+  const tok = await freshToken(); if (!tok) throw new Error('not signed in');
+  const r = await fetch(SB_URL + '/rest/v1/' + path, Object.assign({}, opts, {
+    headers: Object.assign({ apikey: SB_KEY, Authorization: 'Bearer ' + tok }, (opts && opts.headers) || {}),
+  }));
+  if (!r.ok) throw new Error('rest ' + r.status + ' ' + (await r.text()).slice(0, 120));
+  const t = await r.text(); return t ? JSON.parse(t) : null;
+}
+
+// mark everything already on this phone as needing upload (first sign-in on a device)
+async function markAllDirty() {
+  for (const s of SYNC_STORES) for (const rec of D[s]) { rec._d = rec.updated_at || new Date().toISOString(); await idb(s, 'readwrite', o => o.put(rec)); }
+  for (const k of Object.keys(K)) if (!KV_LOCAL.includes(k) && k[0] !== '_') { const rec = { id: k, v: K[k], _d: new Date().toISOString() }; await idb('kv', 'readwrite', o => o.put(rec)); }
+}
+
+// push local changes up
+async function pushChanges() {
+  const fid = sess().farm_id;
+  for (const s of SYNC_STORES) {
+    const dirty = D[s].filter(r => r._d);
+    const tombs = (await sall()).filter(t => t.store === s);
+    const rows = dirty.map(r => ({ farm_id: fid, id: r.id, doc: stripMeta(r), deleted: false }))
+      .concat(tombs.map(t => ({ farm_id: fid, id: t.rid, doc: t.doc || {}, deleted: true })));
+    if (!rows.length) continue;
+    await sb(s + '?on_conflict=farm_id,id', { method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' }, body: JSON.stringify(rows) });
+    for (const r of dirty) { delete r._d; await idb(s, 'readwrite', o => o.put(r)); }
+    for (const t of tombs) await sdel(t.id);
+  }
+  const kvRec = await idb('kv', 'readonly', o => o.getAll());
+  const kvDirty = kvRec.filter(r => r._d && !KV_LOCAL.includes(r.id) && r.id[0] !== '_');
+  if (kvDirty.length) {
+    const rows = kvDirty.map(r => ({ farm_id: fid, id: r.id, doc: { v: r.v }, deleted: false }));
+    await sb('kv?on_conflict=farm_id,id', { method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' }, body: JSON.stringify(rows) });
+    for (const r of kvDirty) { delete r._d; await idb('kv', 'readwrite', o => o.put(r)); }
+  }
+}
+
+// pull remote changes down (by rev cursor per store)
+async function pullChanges() {
+  const fid = sess().farm_id;
+  const cursors = (await idb('_sync', 'readonly', o => o.get('cursors')))?.v || {};
+  let changed = false;
+  for (const s of STORES) {
+    let cur = cursors[s] || 0, more = true;
+    while (more) {
+      const rows = await sb(s + '?farm_id=eq.' + fid + '&rev=gt.' + cur + '&order=rev.asc&limit=500&select=id,doc,deleted,rev,updated_at');
+      if (!rows || !rows.length) break;
+      for (const row of rows) {
+        cur = Math.max(cur, row.rev);
+        if (s === 'kv') {
+          if (row.deleted) { if (!KV_LOCAL.includes(row.id)) { delete K[row.id]; await idb('kv', 'readwrite', o => o.delete(row.id)); changed = true; } continue; }
+          if (KV_LOCAL.includes(row.id)) continue;
+          K[row.id] = row.doc.v; await idb('kv', 'readwrite', o => o.put({ id: row.id, v: row.doc.v })); changed = true; continue;
+        }
+        const local = byId(s, row.id);
+        if (row.deleted) { if (local) { D[s] = D[s].filter(x => x.id !== row.id); await idb(s, 'readwrite', o => o.delete(row.id)); changed = true; } continue; }
+        // last-write-wins: keep local only if it is dirty AND newer
+        if (local && local._d && (local.updated_at || '') > (row.updated_at || '')) continue;
+        const rec = Object.assign({}, row.doc, { id: row.id, updated_at: row.updated_at, _rev: row.rev });
+        const i = D[s].findIndex(x => x.id === row.id); if (i >= 0) D[s][i] = rec; else D[s].push(rec);
+        await idb(s, 'readwrite', o => o.put(rec)); changed = true;
+      }
+      cursors[s] = cur; more = rows.length === 500;
+    }
+  }
+  await sput({ id: 'cursors', v: cursors });
+  return changed;
+}
+
+async function syncNow(silent) {
+  if (!sess() || SY.busy || !navigator.onLine) { if (!silent && !navigator.onLine) toast('No internet - will sync when back online'); return; }
+  SY.busy = true; updateSyncUI();
+  try {
+    await pushChanges();
+    const changed = await pullChanges();
+    SY.lastOk = Date.now(); SY.lastErr = '';
+    if (changed && !sheetStack.length) render();
+    if (!silent) toast('Synced');
+  } catch (e) {
+    SY.lastErr = String(e.message || e);
+    if (!silent) toast('Sync failed - will retry');
+  } finally { SY.busy = false; updateSyncUI(); }
+}
+const scheduleSync = () => { clearTimeout(SY.timer); SY.timer = setTimeout(() => syncNow(true), 2500); };
+
+// account card shown at the top of the More tab
+function accountCardHtml() {
+  const on = !!sess();
+  const title = on ? esc((sess().name) || 'My farm') : 'Back up &amp; sync';
+  const sub = on ? (SY.lastErr ? '&#9888;&#65039; sync problem - tap to retry' : (SY.lastOk ? 'Backed up &middot; ' + new Date(SY.lastOk).toLocaleTimeString() : 'Signed in &middot; backing up...')) : 'Create an account so your records are safe';
+  const em = on ? (SY.busy ? '&#128260;' : (SY.lastErr ? '&#9888;&#65039;' : '&#9729;&#65039;')) : '&#9729;&#65039;';
+  return '<div class="card"><div class="li" style="cursor:pointer" onclick="A.account()"><div class="em">' + em + '</div><div class="grow"><div class="t">' + title + '</div><div class="s">' + sub + '</div></div><span class="xs">&rsaquo;</span></div></div>';
+}
+
+// account UI
+function accountSheet() {
+  if (sess()) {
+    const s = sess();
+    sheet('Your account', '<div class="card"><div class="row"><div class="em">&#9729;&#65039;</div><div class="grow"><div class="t">' + esc(s.name || 'My farm') + '</div><div class="s">Signed in &middot; records back up automatically</div></div></div></div>' +
+      '<div id="accMsg" class="s" style="text-align:center;margin:10px 0">' + (SY.lastErr ? '&#9888;&#65039; ' + esc(SY.lastErr).slice(0, 60) : (SY.lastOk ? 'Last sync ' + new Date(SY.lastOk).toLocaleTimeString() : 'Not synced yet')) + '</div>' +
+      '<button class="btn pri wide" onclick="A.syncNow()">Sync now</button><div style="height:8px"></div><button class="btn wide" onclick="A.signOut()">Sign out</button>', { noFocus: true });
+    return;
+  }
+  sheet('Back up &amp; sync', '<p class="s" style="margin-top:0">Create an account or sign in with your phone number and a PIN. Your records back up to the cloud and reach your other phones. The app keeps working offline.</p>' +
+    '<button class="btn pri wide" onclick="A.authForm(\'register\')">Create an account</button><div style="height:8px"></div><button class="btn wide" onclick="A.authForm(\'login\')">I already have one</button>', { noFocus: true });
+}
+function authForm(mode) {
+  const reg = mode === 'register', p = prof();
+  const body = (reg ? '<div class="fld"><span>Your name</span><input id="auName" value="' + esc(p.name || '') + '" maxlength="80"></div>' : '') +
+    '<div class="fld"><span>Phone number</span><input id="auPhone" type="tel" inputmode="tel" placeholder="07xx xxx xxx" value="' + esc(p.phone || '') + '"></div>' +
+    '<div class="fld"><span>PIN (4 to 6 digits)</span><input id="auPin" type="password" inputmode="numeric" maxlength="6"></div>' +
+    (reg ? '<div class="fld"><span>Repeat PIN</span><input id="auPin2" type="password" inputmode="numeric" maxlength="6"></div>' : '') +
+    '<div id="auMsg"></div><button class="btn pri wide" id="auGo">' + (reg ? 'Create account' : 'Sign in') + '</button>';
+  const ov = sheet(reg ? 'Create an account' : 'Sign in', body, { noFocus: true });
+  ov.querySelector('#auGo').onclick = async () => {
+    const set = m => { ov.querySelector('#auMsg').innerHTML = '<div class="note bad">' + esc(m) + '</div>'; };
+    const phone = ($('auPhone').value || '').trim(), pin = ($('auPin').value || '').trim();
+    if (!/^[0-9+\s]{9,}$/.test(phone)) return set('Enter a valid phone number');
+    if (!/^\d{4,6}$/.test(pin)) return set('PIN must be 4 to 6 digits');
+    if (reg && pin !== ($('auPin2').value || '').trim()) return set('The two PINs do not match');
+    if (!navigator.onLine) return set('You need internet to set up the account the first time');
+    const go2 = ov.querySelector('#auGo'); go2.disabled = true; go2.textContent = 'Please wait...';
+    const name = reg ? ($('auName').value || '').trim() : '';
+    const activities = (prof().activities) || [isProp() ? 'nursery' : 'crops'];
+    let res; try { res = await farmAuth(mode, phone, pin, reg ? { name, activities } : {}); } catch (e) { res = { ok: false, code: 'network' }; }
+    if (!res.ok) {
+      const msg = { phone_taken: 'That phone already has an account - sign in instead', not_found: 'No account for that phone - create one', bad_pin: 'Wrong PIN', bad_phone: 'Enter a valid phone number', forbidden_origin: 'This copy of the app is not allowed', network: 'No internet - try again' }[res.code] || ('Could not ' + (reg ? 'create account' : 'sign in'));
+      go2.disabled = false; go2.textContent = reg ? 'Create account' : 'Sign in';
+      return set(msg);
+    }
+    await setSession({ ...res.session, farm_id: res.farm.id, name: res.farm.name || name });
+    await markAllDirty();
+    closeAll();
+    toast(reg ? 'Account created' : 'Signed in');
+    await syncNow(false);
+  };
+}
+function updateSyncUI() { const b = $('syncDot'); if (b) b.textContent = !sess() ? '' : SY.busy ? '🔄' : SY.lastErr ? '⚠️' : '☁️'; try { if (sheetStack.length) { const m = $('accMsg'); if (m) m.innerHTML = SY.lastErr ? '⚠️ ' + esc(SY.lastErr).slice(0, 60) : (SY.lastOk ? 'Last sync ' + new Date(SY.lastOk).toLocaleTimeString() : 'Not synced yet'); } } catch (e) {} }
+
+async function initSync() {
+  try { const s = (typeof K !== 'undefined') ? K['_session'] : null; if (s) SY.session = s; } catch (e) {}
+  updateSyncUI();
+  window.addEventListener('online', () => syncNow(true));
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(true); });
+  setInterval(() => syncNow(true), 60000);
+  if (sess()) syncNow(true);
+}
+
+try { Object.assign(window.A, { account: accountSheet, accountSheet, authForm, syncNow, signOut, scheduleSync }); } catch (e) {}
