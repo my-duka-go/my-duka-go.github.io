@@ -532,6 +532,7 @@ function moreTab() {
   let h = '<div class="card"><div class="row"><div class="em">' + (prop ? '🌱' : '🧑‍🌾') + '</div><div class="grow"><div class="t">' + esc(p.name || '') + '</div><div class="s">' + esc(p.farm || '') + (p.county ? ' · ' + esc(p.county) : '') + '</div></div><button class="btn sm" onclick="A.profile()">Edit</button></div></div>';
   h += (typeof accountCardHtml === 'function' ? accountCardHtml() : '');
   h += '<div class="card list">' + item('🌐', 'Language', 'English / Kiswahili / Gĩkũyũ', 'A.language()') + '</div>';
+  if (typeof sess === 'function' && sess()) h += '<div class="card list">' + item('🚪', 'Sign out', esc(sess().name || 'Signed in'), 'A.signOut()') + '</div>';
   h += '<div class="card list">' + item('🚜', 'What is on your farm', ents().map(e => ENTS[e][1]).join(', '), 'A.activities()') + (prop || !hasAnimals() || !hasEnt('crops') ? '' : item('🩺', 'Plant doctor', 'Check sick plants', 'A.go(\'doctor\')')) + (prop ? '' : item('🗺️', 'Fields and blocks', 'Where each crop is planted', 'A.fields()') + item('🌱', 'Seedlings I ordered', 'Know when they are ready to plant', 'A.seedOrders()')) +
     (prop ? item('🩺', 'Plant doctor', 'Check sick seedlings', 'A.go(\'doctor\')') : '') +
     item('🌱', 'My crops', (prof().crops || []).map(c0).join(', ') || 'All crops', 'A.myCrops()') +
@@ -1342,7 +1343,7 @@ const sall = () => idb('_sync', 'readonly', o => o.getAll());
 
 function sess() { return SY.session; }
 async function setSession(s) { SY.session = s; await setK('_session', s); updateSyncUI(); }
-async function signOut() { SY.session = null; await setK('_session', null); updateSyncUI(); try { closeAll(); } catch (e) {} toast('Signed out - records stay on this phone'); }
+async function signOut() { SY.session = null; await setK('_session', null); updateSyncUI(); try { closeAll(); } catch (e) {} try { render(); } catch (e) {} toast('Signed out - records stay on this phone'); }
 async function freshToken() {
   const s = sess(); if (!s) return null;
   if (s.expires_at && s.expires_at * 1000 > Date.now() + 60000) return s.access_token;
@@ -1597,6 +1598,66 @@ const T_KI = {
   'Crop guide': 'Ũtaarania wa mĩmera', 'Seedling calculator': 'Gũtara mĩtĩ',
   'Change or remove PIN': 'Garũra kana ũrute PIN', 'Dark screen': 'Kĩoneki kĩirũ', 'Light screen': 'Kĩoneki kĩerũ',
 };
+Object.assign(T_SW, {
+  // record flows / verbs
+  'Record a harvest': 'Rekodi mavuno', 'Record a sale': 'Rekodi mauzo', 'Record an activity': 'Rekodi shughuli',
+  'Record an expense': 'Rekodi matumizi', 'Record milk': 'Rekodi maziwa', 'Record eggs': 'Rekodi mayai',
+  'Saved': 'Imehifadhiwa', 'Removed': 'Imeondolewa', 'Deleted': 'Imefutwa', 'Add': 'Ongeza', 'Open': 'Fungua',
+  'Skip': 'Ruka', 'Switch': 'Badilisha', 'Use this': 'Tumia hii', 'Remove photo': 'Ondoa picha', 'Take a photo': 'Piga picha',
+  'Please wait...': 'Tafadhali subiri...', 'Please confirm': 'Tafadhali thibitisha', 'Yes': 'Ndiyo', 'No': 'Hapana',
+  'Synced': 'Imesawazishwa', 'Reminder added': 'Kikumbusho kimeongezwa', 'Sign out': 'Toka', 'Signed in': 'Umeingia',
+  // form labels
+  'Planting date': 'Tarehe ya kupanda', 'Quantity': 'Kiasi', 'Unit': 'Kipimo', 'Type': 'Aina', 'Status': 'Hali',
+  'Variety': 'Aina', 'Price per unit (KSh)': 'Bei kwa kipimo (KSh)', 'Price per seedling (KSh)': 'Bei kwa mche (KSh)',
+  'Total': 'Jumla', 'Total (KSh)': 'Jumla (KSh)', 'Amount (KSh)': 'Kiasi (KSh)', 'Paid': 'Imelipwa',
+  'Will pay later': 'Atalipa baadaye', 'Phone': 'Simu', 'Ready date': 'Tarehe ya kuwa tayari', 'Quantity ': 'Kiasi',
+  'Treatment': 'Matibabu', 'Vaccination': 'Chanjo', 'Vet and medicine': 'Daktari na dawa', 'Vet visit': 'Ziara ya daktari',
+  // statuses / money
+  'Profit': 'Faida', 'Profit this month': 'Faida mwezi huu', 'Sales this month': 'Mauzo mwezi huu',
+  'Costs this month': 'Gharama mwezi huu', 'Milk this month': 'Maziwa mwezi huu', 'This month': 'Mwezi huu',
+  'This year': 'Mwaka huu', 'Where the money went': 'Pesa zilipoenda', 'What was sold': 'Kilichouzwa',
+  'Who owes you': 'Wanaokudai', 'Ready': 'Tayari', 'Ready now': 'Tayari sasa', 'Ready soon': 'Tayari hivi karibuni',
+  'Growing': 'Inakua', 'Still growing': 'Bado inakua', 'Sold': 'Imeuzwa', 'Sold out': 'Imeisha',
+  'Litres': 'Lita', 'Milk (litres)': 'Maziwa (lita)', 'Eggs today': 'Mayai leo', 'Milk today': 'Maziwa leo',
+  'Deaths': 'Vifo', 'Nursery': 'Kitalu', 'Order': 'Agizo', 'Order saved': 'Agizo limehifadhiwa',
+  'Seedling order': 'Agizo la miche',
+  // plant doctor / crops
+  'What do you see?': 'Unaona nini?', 'Likely problems': 'Matatizo yanayowezekana', 'Common problems': 'Matatizo ya kawaida',
+  'Disease': 'Ugonjwa', 'Pest': 'Wadudu', 'What to do': 'Cha kufanya', 'Problems': 'Matatizo', 'Other': 'Nyingine',
+  // onboarding extra / settings
+  'Welcome to Farm on the Go': 'Karibu Farm on the Go', 'Who are you?': 'Wewe ni nani?', 'What do you grow?': 'Unalima nini?',
+  'Your name': 'Jina lako', 'Your details': 'Maelezo yako', 'Please enter your name': 'Tafadhali weka jina lako',
+  'Pick at least one': 'Chagua angalau moja', 'Set a PIN': 'Weka PIN', 'Screen lock': 'Kufunga skrini',
+  'Reminders on': 'Vikumbusho vimewashwa', 'Notification': 'Arifa',
+});
+Object.assign(T_KI, {
+  // DRAFT - needs native Gĩkũyũ review
+  'Record a harvest': 'Andĩka magetha', 'Record a sale': 'Andĩka wendia', 'Record an activity': 'Andĩka wĩra',
+  'Record an expense': 'Andĩka mahũthĩro', 'Record milk': 'Andĩka iria', 'Record eggs': 'Andĩka matumbĩ',
+  'Saved': 'Nĩ kũigwo', 'Removed': 'Nĩ kũeherio', 'Deleted': 'Nĩ gũtherio', 'Add': 'Ongerera', 'Open': 'Hingũra',
+  'Skip': 'Tiga', 'Switch': 'Garũra', 'Use this': 'Hũthĩra ĩno', 'Remove photo': 'Eheria mbica', 'Take a photo': 'Oya mbica',
+  'Please wait...': 'Eterera...', 'Please confirm': 'Ĩtĩkĩra', 'Yes': 'Ĩĩ', 'No': 'Aca',
+  'Synced': 'Nĩ kũnyitithanio', 'Reminder added': 'Kĩririkano nĩ kuongererwo', 'Sign out': 'Uma', 'Signed in': 'Nĩwatoonya',
+  'Planting date': 'Mũthenya wa kũhaanda', 'Quantity': 'Mũigana', 'Unit': 'Gĩthimo', 'Type': 'Mũthemba', 'Status': 'Ũrĩa gũtariĩ',
+  'Variety': 'Mũthemba', 'Price per unit (KSh)': 'Thogora wa kĩmwe (KSh)', 'Price per seedling (KSh)': 'Thogora wa mũtĩ (KSh)',
+  'Total': 'Mũigana wothe', 'Total (KSh)': 'Mũigana wothe (KSh)', 'Amount (KSh)': 'Mũigana (KSh)', 'Paid': 'Nĩ kũrĩhwo',
+  'Will pay later': 'Akaarĩha thutha', 'Phone': 'Thimũ', 'Ready date': 'Mũthenya wa gũkinya', 'Quantity ': 'Mũigana',
+  'Treatment': 'Kũhonia', 'Vaccination': 'Chanjo', 'Vet and medicine': 'Ndagĩtarĩ na ndawa', 'Vet visit': 'Gũthiĩ kũrĩ ndagĩtarĩ',
+  'Profit': 'Faida', 'Profit this month': 'Faida mweri ũyũ', 'Sales this month': 'Wendia mweri ũyũ',
+  'Costs this month': 'Mahũthĩro mweri ũyũ', 'Milk this month': 'Iria mweri ũyũ', 'This month': 'Mweri ũyũ',
+  'This year': 'Mwaka ũyũ', 'Where the money went': 'Kũrĩa mbeeca ciathiĩte', 'What was sold': 'Kĩrĩa kĩendirio',
+  'Who owes you': 'Arĩa makũrĩ thiri', 'Ready': 'Nĩ hongoku', 'Ready now': 'Ĩkinyĩte rĩu', 'Ready soon': 'Ĩgũkinya o rĩngĩ',
+  'Growing': 'Nĩ gũkũra', 'Still growing': 'No gũkũra', 'Sold': 'Nĩ kwendio', 'Sold out': 'Nĩ thiru',
+  'Litres': 'Litũ', 'Milk (litres)': 'Iria (litũ)', 'Eggs today': 'Matumbĩ ũmũthĩ', 'Milk today': 'Iria ũmũthĩ',
+  'Deaths': 'Ikuũ', 'Nursery': 'Nathari', 'Order': 'Oda', 'Order saved': 'Oda nĩyaigwo',
+  'Seedling order': 'Oda ya mĩtĩ',
+  'What do you see?': 'Nĩ kĩĩ ũroona?', 'Likely problems': 'Mathĩĩna marĩa mangĩkorwo', 'Common problems': 'Mathĩĩna ma kawaida',
+  'Disease': 'Mũrimũ', 'Pest': 'Tũdudũ', 'What to do': 'Kĩrĩa ũgwĩka', 'Problems': 'Mathĩĩna', 'Other': 'Ĩngĩ',
+  'Welcome to Farm on the Go': 'Wĩ mũkaribu Farm on the Go', 'Who are you?': 'Wee nĩwe ũ?', 'What do you grow?': 'Ũrĩmaga kĩĩ?',
+  'Your name': 'Rĩĩtwa rĩaku', 'Your details': 'Ũhoro waku', 'Please enter your name': 'Andĩka rĩĩtwa rĩaku',
+  'Pick at least one': 'Thuura o na ĩmwe', 'Set a PIN': 'Iga PIN', 'Screen lock': 'Kũhinga kĩoneki',
+  'Reminders on': 'Irikano nĩ ciigũrie', 'Notification': 'Kĩmenyithia',
+});
 function langDict() { return LANG === 'sw' ? T_SW : LANG === 'ki' ? T_KI : null; }
 function translateDOM(root) {
   const d = langDict(); if (!d || !root) return;
