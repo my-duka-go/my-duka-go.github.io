@@ -2,7 +2,7 @@
    Everything is kept on this phone (IndexedDB 'farm_on_the_go_v1'), so it works with no internet at all. It shares
    nothing with the other DukaGO apps: its own database, its own offline cache and its own settings. */
 'use strict';
-const BUILD = '2026-11-11-1';
+const BUILD = '2026-11-11-2';
 const L = window.FARM_LIB;
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1722,8 +1722,8 @@ try { Object.assign(window.A, { language: langSheet, setLang }); } catch (e) {}
     return sb('seedling_orders', { method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: JSON.stringify([row]) });
   }
 
-  const SOST = { placed: 'New order', accepted: 'Accepted', ready: 'Ready to collect', collected: 'Collected', declined: 'Not available' };
-  const SOCLS = { placed: 'a', accepted: 'g', ready: 'pos', collected: '', declined: 'r' };
+  const SOST = { placed: 'New order', accepted: 'Accepted', ready: 'Ready to collect', collected: 'Collected', declined: 'Not available', released: 'Released - back in stock' };
+  const SOCLS = { placed: 'a', accepted: 'g', ready: 'pos', collected: '', declined: 'r', released: 'r' };
   function nid() { return 'so_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
   // ---- create an online order from the farmer side (called by editSOrder when a code is entered) ----
@@ -1753,7 +1753,6 @@ try { Object.assign(window.A, { language: langSheet, setLang }); } catch (e) {}
       for (const o of ready) { const so = (D.sorders || []).find(x => x.online === o.id); if (so && so.status !== 'collected' && so.status !== 'ready') { so.status = 'ready'; try { await save('sorders', so); } catch (e) {} } }
       const rows = ready.map(o => '<div class="li"><div class="em">' + cropEm(o.crop) + '</div><div class="grow"><div class="t">' + (o.qty ? plural(num(o.qty), 'seedling') + ' · ' : '') + esc(crop(o.crop).n || o.crop || 'Seedlings') + '</div><div class="s">Ready now · order from a nursery</div></div></div>').join('');
       sheet('🌱 Your seedlings are ready!', '<div class="note good">A nursery has marked your seedling order ready to collect.</div><div class="card list">' + rows + '</div><button class="btn pri wide" onclick="A.nursery()">See my orders</button>', { noFocus: true });
-      try { await patchOrder('in.(' + ready.map(o => '"' + o.id + '"').join(',') + ')', {}); } catch (e) {}
       // mark seen one by one (reliable under RLS)
       for (const o of ready) { try { await patchOrder(o.id, { seen_by_buyer: true }); } catch (e) {} }
     } catch (e) {}
@@ -1789,17 +1788,20 @@ try { Object.assign(window.A, { language: langSheet, setLang }); } catch (e) {}
     let h = '<div class="card"><div class="s">Your nursery code - share it with farmers</div><div class="big" style="letter-spacing:3px;margin:6px 0">' + esc(code || '—') + '</div>' +
       '<div class="btns">' + (code ? '<button class="btn pri" onclick="A.nurShare(\'' + esc(code) + '\')">📣 Share code</button><button class="btn" onclick="A.nurCopy(\'' + esc(code) + '\')">Copy</button>' : '') + '</div>' +
       '<p class="xs" style="margin:8px 0 0">A farmer enters this code in their app under “Seedlings I ordered”. Their order then shows here, and when you mark it ready they get a message in their app.</p></div>';
-    h += '<h2>Orders through your code</h2>';
+    h += '<div class="row" style="align-items:center;margin-top:14px"><h2 style="margin:0" class="grow">Orders through your code</h2>' + (orders.length ? '<button class="btn sm" onclick="A.nurExport()">⬇ Excel</button>' : '') + '</div>';
     h += open.length ? open.map(propOrderCard).join('') : '<div class="card s">No online orders yet. Share your code with the farmers you supply.</div>';
-    if (done.length) h += '<h2>Collected / closed</h2>' + done.slice(0, 20).map(propOrderCard).join('');
+    if (done.length) h += '<h2>Collected / closed</h2>' + done.slice(0, 30).map(propOrderCard).join('');
     sheetReplace('Nursery link', h);
   }
   function propOrderCard(o) {
     const st = SOST[o.status] || o.status, cls = SOCLS[o.status] || '';
-    let h = '<div class="card"><div class="row top"><div class="em">' + cropEm(o.crop) + '</div><div class="grow"><div class="t">' + esc(o.buyer_name || 'A farmer') + ' · ' + (o.qty ? plural(num(o.qty), 'seedling') : 'seedlings') + '</div><div class="s">' + esc(crop(o.crop).n || o.crop || '') + (o.note ? ' · ' + esc(o.note) : '') + '</div>' + (o.buyer_phone ? '<div class="xs">📞 ' + esc(o.buyer_phone) + '</div>' : '') + '</div><span class="pill ' + cls + '">' + st + '</span></div>';
+    const overdue = o.status === 'ready' && o.collect_by && today() > o.collect_by;
+    const sub = esc(crop(o.crop).n || o.crop || '') + (o.note ? ' · ' + esc(o.note) : '') + (o.collect_by ? ' · collect by ' + fmtD(o.collect_by) : '');
+    let h = '<div class="card"><div class="row top"><div class="em">' + cropEm(o.crop) + '</div><div class="grow"><div class="t">' + esc(o.buyer_name || 'A farmer') + ' · ' + (o.qty ? plural(num(o.qty), 'seedling') : 'seedlings') + '</div><div class="s">' + sub + '</div>' + (o.buyer_phone ? '<div class="xs">📞 ' + esc(o.buyer_phone) + '</div>' : '') + '</div><span class="pill ' + cls + '">' + st + '</span></div>';
+    if (overdue) h += '<div class="note warn" style="margin:10px 0 2px">⚠️ Not collected by ' + fmtD(o.collect_by) + '. You can release these seedlings to sell to someone else.</div>';
     if (o.status === 'placed') h += '<div class="btns" style="margin-top:10px"><button class="btn ok" style="flex:1" onclick="A.nurSet(\'' + o.id + '\',\'accepted\')">✓ Accept</button><button class="btn bad" style="flex:1" onclick="A.nurSet(\'' + o.id + '\',\'declined\')">✕ Not available</button></div>';
-    else if (o.status === 'accepted') h += '<div class="btns" style="margin-top:10px"><button class="btn pri" style="flex:1" onclick="A.nurSet(\'' + o.id + '\',\'ready\')">🌱 Mark ready</button>' + (o.buyer_phone ? '<a class="btn" target="_blank" rel="noopener" href="' + waLink(o.buyer_phone, 'Hello ' + (o.buyer_name || '') + ', your ' + (crop(o.crop).n || '') + ' seedlings are confirmed. - ' + (prof().farm || prof().name || '')) + '">💬</a>' : '') + '</div>';
-    else if (o.status === 'ready') h += '<div class="btns" style="margin-top:10px"><button class="btn ok" style="flex:1" onclick="A.nurSet(\'' + o.id + '\',\'collected\')">Collected</button></div>';
+    else if (o.status === 'accepted') h += '<div class="btns" style="margin-top:10px"><button class="btn pri" style="flex:1" onclick="A.nurReady(\'' + o.id + '\')">🌱 Mark ready</button>' + (o.buyer_phone ? '<a class="btn" target="_blank" rel="noopener" href="' + waLink(o.buyer_phone, 'Hello ' + (o.buyer_name || '') + ', your ' + (crop(o.crop).n || '') + ' seedlings are confirmed. - ' + (prof().farm || prof().name || '')) + '">💬</a>' : '') + '</div>';
+    else if (o.status === 'ready') h += '<div class="btns" style="margin-top:10px"><button class="btn ok" style="flex:1" onclick="A.nurSet(\'' + o.id + '\',\'collected\')">Collected</button><button class="btn' + (overdue ? ' bad' : '') + '" onclick="A.nurRelease(\'' + o.id + '\')">Release</button></div>';
     return h + '</div>';
   }
 
@@ -1847,6 +1849,32 @@ try { Object.assign(window.A, { language: langSheet, setLang }); } catch (e) {}
     async nurSet(id, status) {
       const patch = { status }; if (status === 'ready') patch.ready_at = new Date().toISOString();
       try { await patchOrder(id, patch); toast(status === 'ready' ? 'Marked ready - the farmer will be told' : status === 'collected' ? 'Marked collected' : status === 'accepted' ? 'Order accepted' : 'Updated'); if (isProp()) propScreen(); } catch (e) { toast('Could not update - check internet'); }
+    },
+    // mark ready + set a collect-by date so you can chase or release uncollected orders
+    nurReady(id) {
+      form('Mark ready to collect', [
+        { k: 'collect_by', l: 'Collect by (date)', t: 'date', v: addD(today(), 7), req: 1, hint: 'If the farmer has not collected by this date you can release the seedlings to sell to someone else.' }
+      ], async r => {
+        try { await patchOrder(id, { status: 'ready', ready_at: new Date().toISOString(), collect_by: r.collect_by }); toast('Marked ready - the farmer will be told in their app'); if (isProp()) propScreen(); }
+        catch (e) { throw new Error('Could not update - check internet'); }
+      });
+    },
+    async nurRelease(id) {
+      if (!await ask('Release these seedlings? The booking is cancelled and the seedlings are free to sell to someone else.', 'Release', 'Keep')) return;
+      try { await patchOrder(id, { status: 'released' }); toast('Released - seedlings back in your stock to sell'); if (isProp()) propScreen(); } catch (e) { toast('Could not update - check internet'); }
+    },
+    async nurExport() {
+      let orders = []; try { orders = await listOrders('seller'); } catch (e) {}
+      if (!orders.length) { toast('No orders to download yet'); return; }
+      const rows = [['Ordered', 'Farmer', 'Phone', 'Crop', 'Note', 'Seedlings', 'Status', 'Collect by', 'Marked ready']];
+      orders.forEach(o => rows.push([
+        o.created_at ? new Date(o.created_at).toLocaleDateString('en-KE') : '', o.buyer_name || '', o.buyer_phone || '',
+        crop(o.crop).n || o.crop || '', o.note || '', o.qty || '', SOST[o.status] || o.status || '',
+        o.collect_by ? fmtD(o.collect_by) : '', o.ready_at ? new Date(o.ready_at).toLocaleDateString('en-KE') : ''
+      ]));
+      const csv = '﻿' + rows.map(r => r.map(x => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"').join(',')).join('\r\n');
+      download('nursery-orders-' + today() + '.csv', csv, 'text/csv;charset=utf-8');
+      toast('Orders downloaded - opens in Excel');
     },
     nurShare(code) { const msg = 'Order seedlings from my nursery in the Farm on the Go app: open “Seedlings I ordered”, tap “Order with a nursery code”, and enter code ' + code + '. ' + (prof().farm || prof().name || ''); try { window.open(waLink('', msg), '_blank'); } catch (e) {} },
     nurCopy(code) { try { navigator.clipboard.writeText(code); toast('Code copied'); } catch (e) { toast(code); } }
