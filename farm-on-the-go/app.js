@@ -2,7 +2,7 @@
    Everything is kept on this phone (IndexedDB 'farm_on_the_go_v1'), so it works with no internet at all. It shares
    nothing with the other DukaGO apps: its own database, its own offline cache and its own settings. */
 'use strict';
-const BUILD = '2026-11-06-1';
+const BUILD = '2026-11-11-1';
 const L = window.FARM_LIB;
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -532,6 +532,7 @@ function moreTab() {
   let h = '<div class="card"><div class="row"><div class="em">' + (prop ? '🌱' : '🧑‍🌾') + '</div><div class="grow"><div class="t">' + esc(p.name || '') + '</div><div class="s">' + esc(p.farm || '') + (p.county ? ' · ' + esc(p.county) : '') + '</div></div><button class="btn sm" onclick="A.profile()">Edit</button></div></div>';
   h += (typeof accountCardHtml === 'function' ? accountCardHtml() : '');
   h += '<div class="card list">' + item('🌐', 'Language', 'English / Kiswahili / Gĩkũyũ', 'A.language()') + '</div>';
+  h += '<div class="card list">' + item('🔗', prop ? 'Nursery link &amp; online orders' : 'Nursery link', prop ? 'Share your code; orders come to the app' : 'Order by code, get told when seedlings are ready', 'A.nursery()') + '</div>';
   if (typeof sess === 'function' && sess()) h += '<div class="card list">' + item('🚪', 'Sign out', esc(sess().name || 'Signed in'), 'A.signOut()') + '</div>';
   h += '<div class="card list">' + item('🚜', 'What is on your farm', ents().map(e => ENTS[e][1]).join(', '), 'A.activities()') + (prop || !hasAnimals() || !hasEnt('crops') ? '' : item('🩺', 'Plant doctor', 'Check sick plants', 'A.go(\'doctor\')')) + (prop ? '' : item('🗺️', 'Fields and blocks', 'Where each crop is planted', 'A.fields()') + item('🌱', 'Seedlings I ordered', 'Know when they are ready to plant', 'A.seedOrders()')) +
     (prop ? item('🩺', 'Plant doctor', 'Check sick seedlings', 'A.go(\'doctor\')') : '') +
@@ -1115,10 +1116,12 @@ const A = window.A = {
     form(o ? 'Edit seedling order' : 'Seedlings I ordered', [
       { k: 'crop', l: 'Crop', t: 'select', o: cropOpts(false, v.crop), v: v.crop }, { k: 'variety', l: 'Variety', v: v.variety }, { k: 'qty', l: 'Number of seedlings', t: 'num', v: v.qty, req: 1 },
       { k: 'nursery', l: 'Nursery / propagator', v: v.nursery, list: [...new Set(D.sorders.map(x => x.nursery).filter(Boolean))], req: 1 }, { k: 'phone', l: 'Nursery phone', t: 'tel', v: v.phone },
+      { k: 'nurcode', l: 'Nursery code (optional)', v: v.nurcode, ph: 'e.g. 4KQ7P9', hint: 'If the nursery gave you a code, the order goes to them and you are told in the app when it is ready.' },
       { k: 'ready', l: 'Ready date (as the nursery told you)', t: 'date', v: v.ready || addD(today(), crop(v.crop).nursery || 30), req: 1 },
       { k: 'price', l: 'Price per seedling (KSh)', t: 'num', v: v.price },
       { k: 'status', l: 'Status', t: 'select', o: [['waiting', 'Waiting'], ['collected', 'Collected and planted'], ['cancelled', 'Cancelled']], v: v.status }
     ], async r => { const rec = await save('sorders', Object.assign(o || { id: uid() }, r));
+      if (r.nurcode && !rec.online && window.NUR && typeof sess === 'function' && sess()) { try { const res = await window.NUR.placeOnline(r.nurcode, { crop: r.crop, qty: r.qty, variety: r.variety, phone: r.phone }); if (res && res.online) { rec.online = res.online; if (res.nursery) rec.nursery = res.nursery; await save('sorders', rec); } } catch (e) {} }
       if (!o && r.phone) setTimeout(async () => { if (await ask('Send this order to the nursery on WhatsApp?', 'Open WhatsApp', 'No')) window.open(waLink(r.phone, 'Hello ' + r.nursery + ', I would like to order ' + fmtN(num(r.qty)) + ' ' + crop(r.crop).n + (r.variety ? ' (' + r.variety + ')' : '') + ' seedlings, ready by ' + fmtD(r.ready) + '. Please confirm. - ' + (prof().name || '')), '_blank'); }, 60);
       if (!o && r.price) await save('expenses', { id: uid(), side: 'farmer', date: today(), pid: '', cat: 'Seed / seedlings', amount: num(r.price) * num(r.qty), notes: 'Seedlings from ' + r.nursery, sorder: rec.id }) && toast('Seedling cost added to expenses');
     }, { del: o ? () => remove('sorders', o.id) : null, onOpen: ov => on(ov, '#f_crop', 'change', e => { if (!o) $('f_ready').value = addD(today(), crop(e.target.value).nursery || 30); }) });
@@ -1690,4 +1693,181 @@ try { Object.assign(window.A, { language: langSheet, setLang }); } catch (e) {}
   function ping(ev) { try { let acct = ''; try { acct = (typeof sess === 'function' && sess() && sess().name) || ''; } catch (e) {} fetch(IURL, { method: 'POST', headers: { apikey: IKEY, Authorization: 'Bearer ' + IKEY, 'Content-Type': 'application/json' }, body: JSON.stringify({ app: APP, event: ev, device_id: devId(), account: acct }) }).catch(() => {}); } catch (e) {} }
   try { if (!localStorage.getItem('dg_opened')) { localStorage.setItem('dg_opened', '1'); ping('first_open'); } } catch (e) {}
   try { window.addEventListener('appinstalled', () => ping('installed')); } catch (e) {}
+})();
+
+// ================= nursery link: online seedling orders (farmer <-> propagator) =================
+// Offline-first stays intact. This adds an OPTIONAL online layer: a propagator shares a short
+// "nursery code"; a farmer enters it when ordering seedlings; when the propagator marks the
+// order ready, the farmer gets a pop-up in the app on next open/sync. Each farm is isolated by
+// its login token; the seedling_orders table is visible only to the two farms on each order.
+(function () {
+  // --- REST / RPC helpers (reuse the app's authenticated sb(), sess(), prof()) ---
+  async function rpc(fn, body) {
+    return sb('rpc/' + fn, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  }
+  async function myCode() { try { return await rpc('ensure_nursery_code', {}); } catch (e) { return null; } }
+  async function resolveCode(code) {
+    try { const r = await rpc('resolve_nursery', { p_code: String(code || '').trim().toUpperCase() }); return (r && r[0]) || null; } catch (e) { return null; }
+  }
+  async function listOrders(role) {
+    const fid = sess() && sess().farm_id; if (!fid) return [];
+    const col = role === 'seller' ? 'seller_farm_id' : 'buyer_farm_id';
+    try { return (await sb('seedling_orders?' + col + '=eq.' + fid + '&order=created_at.desc&limit=200')) || []; } catch (e) { return []; }
+  }
+  async function patchOrder(id, patch) {
+    patch.updated_at = new Date().toISOString();
+    return sb('seedling_orders?id=eq.' + encodeURIComponent(id), { method: 'PATCH', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: JSON.stringify(patch) });
+  }
+  async function createOrder(row) {
+    return sb('seedling_orders', { method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: JSON.stringify([row]) });
+  }
+
+  const SOST = { placed: 'New order', accepted: 'Accepted', ready: 'Ready to collect', collected: 'Collected', declined: 'Not available' };
+  const SOCLS = { placed: 'a', accepted: 'g', ready: 'pos', collected: '', declined: 'r' };
+  function nid() { return 'so_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+
+  // ---- create an online order from the farmer side (called by editSOrder when a code is entered) ----
+  async function placeOnline(code, local) {
+    if (!sess()) { toast('Sign in (More tab) to order online'); return null; }
+    const n = await resolveCode(code);
+    if (!n) { toast('Nursery code not found - the order is still saved on your phone'); return null; }
+    if (n.seller_id === sess().farm_id) { toast('That is your own nursery code'); return null; }
+    const p = prof();
+    const row = {
+      id: nid(), buyer_farm_id: sess().farm_id, seller_farm_id: n.seller_id,
+      buyer_name: p.name || p.farm || 'A farmer', buyer_phone: p.phone || local.phone || '',
+      crop: local.crop || '', qty: num(local.qty) || null, note: [local.variety, local.notes].filter(Boolean).join(' - ') || '',
+      status: 'placed'
+    };
+    try { const r = await createOrder(row); const made = (r && r[0]) || row; toast('Order sent to ' + (n.nursery_name || 'the nursery') + ' - you will be told when it is ready'); return { online: made.id, nursery: n.nursery_name }; }
+    catch (e) { toast('Could not send online - the order is saved on your phone'); return null; }
+  }
+
+  // ---- on-open checks ----
+  async function checkFarmer() {
+    try {
+      const fid = sess() && sess().farm_id; if (!fid || !navigator.onLine) return;
+      const ready = (await sb('seedling_orders?buyer_farm_id=eq.' + fid + '&status=eq.ready&seen_by_buyer=eq.false&order=ready_at.desc')) || [];
+      if (!ready.length) return;
+      // reflect in the local "Seedlings I ordered" list where linked
+      for (const o of ready) { const so = (D.sorders || []).find(x => x.online === o.id); if (so && so.status !== 'collected' && so.status !== 'ready') { so.status = 'ready'; try { await save('sorders', so); } catch (e) {} } }
+      const rows = ready.map(o => '<div class="li"><div class="em">' + cropEm(o.crop) + '</div><div class="grow"><div class="t">' + (o.qty ? plural(num(o.qty), 'seedling') + ' · ' : '') + esc(crop(o.crop).n || o.crop || 'Seedlings') + '</div><div class="s">Ready now · order from a nursery</div></div></div>').join('');
+      sheet('🌱 Your seedlings are ready!', '<div class="note good">A nursery has marked your seedling order ready to collect.</div><div class="card list">' + rows + '</div><button class="btn pri wide" onclick="A.nursery()">See my orders</button>', { noFocus: true });
+      try { await patchOrder('in.(' + ready.map(o => '"' + o.id + '"').join(',') + ')', {}); } catch (e) {}
+      // mark seen one by one (reliable under RLS)
+      for (const o of ready) { try { await patchOrder(o.id, { seen_by_buyer: true }); } catch (e) {} }
+    } catch (e) {}
+  }
+  async function checkProp() {
+    try {
+      const fid = sess() && sess().farm_id; if (!fid || !navigator.onLine) return;
+      const neu = (await sb('seedling_orders?seller_farm_id=eq.' + fid + '&status=eq.placed&order=created_at.desc')) || [];
+      if (!neu.length) return;
+      const seenK = 'nurSeen';
+      let seen = {}; try { seen = K[seenK] || {}; } catch (e) {}
+      const fresh = neu.filter(o => !seen[o.id]);
+      if (!fresh.length) return;
+      sheet('📥 New online orders (' + fresh.length + ')', '<div class="note">Farmers have ordered seedlings using your nursery code.</div>' + fresh.map(o => '<div class="card"><div class="row"><div class="em">' + cropEm(o.crop) + '</div><div class="grow"><div class="t">' + esc(o.buyer_name || 'A farmer') + ' · ' + (o.qty ? plural(num(o.qty), 'seedling') : 'seedlings') + '</div><div class="s">' + esc(crop(o.crop).n || o.crop || '') + (o.note ? ' · ' + esc(o.note) : '') + '</div></div></div></div>').join('') + '<button class="btn pri wide" onclick="A.nursery()">Answer orders</button>', { noFocus: true });
+      fresh.forEach(o => { seen[o.id] = 1; }); try { await setK(seenK, seen); } catch (e) {}
+    } catch (e) {}
+  }
+  async function checkOnOpen() { if (!sess()) return; if (isProp()) await checkProp(); else await checkFarmer(); }
+
+  // ---- the "Nursery link" screen ----
+  async function nurseryScreen() {
+    if (!sess()) { toast('Create an account (More tab) to use the nursery link'); try { A.account && A.account(); } catch (e) {} return; }
+    sheet('Nursery link', '<div class="note" style="text-align:center">Loading…</div>', { noFocus: true });
+    if (isProp()) return propScreen();
+    return farmerScreen();
+  }
+
+  async function propScreen() {
+    const code = await myCode();
+    const orders = await listOrders('seller');
+    const open = orders.filter(o => o.status === 'placed' || o.status === 'accepted' || o.status === 'ready');
+    const done = orders.filter(o => o.status === 'collected' || o.status === 'declined');
+    let h = '<div class="card"><div class="s">Your nursery code - share it with farmers</div><div class="big" style="letter-spacing:3px;margin:6px 0">' + esc(code || '—') + '</div>' +
+      '<div class="btns">' + (code ? '<button class="btn pri" onclick="A.nurShare(\'' + esc(code) + '\')">📣 Share code</button><button class="btn" onclick="A.nurCopy(\'' + esc(code) + '\')">Copy</button>' : '') + '</div>' +
+      '<p class="xs" style="margin:8px 0 0">A farmer enters this code in their app under “Seedlings I ordered”. Their order then shows here, and when you mark it ready they get a message in their app.</p></div>';
+    h += '<h2>Orders through your code</h2>';
+    h += open.length ? open.map(propOrderCard).join('') : '<div class="card s">No online orders yet. Share your code with the farmers you supply.</div>';
+    if (done.length) h += '<h2>Collected / closed</h2>' + done.slice(0, 20).map(propOrderCard).join('');
+    sheetReplace('Nursery link', h);
+  }
+  function propOrderCard(o) {
+    const st = SOST[o.status] || o.status, cls = SOCLS[o.status] || '';
+    let h = '<div class="card"><div class="row top"><div class="em">' + cropEm(o.crop) + '</div><div class="grow"><div class="t">' + esc(o.buyer_name || 'A farmer') + ' · ' + (o.qty ? plural(num(o.qty), 'seedling') : 'seedlings') + '</div><div class="s">' + esc(crop(o.crop).n || o.crop || '') + (o.note ? ' · ' + esc(o.note) : '') + '</div>' + (o.buyer_phone ? '<div class="xs">📞 ' + esc(o.buyer_phone) + '</div>' : '') + '</div><span class="pill ' + cls + '">' + st + '</span></div>';
+    if (o.status === 'placed') h += '<div class="btns" style="margin-top:10px"><button class="btn ok" style="flex:1" onclick="A.nurSet(\'' + o.id + '\',\'accepted\')">✓ Accept</button><button class="btn bad" style="flex:1" onclick="A.nurSet(\'' + o.id + '\',\'declined\')">✕ Not available</button></div>';
+    else if (o.status === 'accepted') h += '<div class="btns" style="margin-top:10px"><button class="btn pri" style="flex:1" onclick="A.nurSet(\'' + o.id + '\',\'ready\')">🌱 Mark ready</button>' + (o.buyer_phone ? '<a class="btn" target="_blank" rel="noopener" href="' + waLink(o.buyer_phone, 'Hello ' + (o.buyer_name || '') + ', your ' + (crop(o.crop).n || '') + ' seedlings are confirmed. - ' + (prof().farm || prof().name || '')) + '">💬</a>' : '') + '</div>';
+    else if (o.status === 'ready') h += '<div class="btns" style="margin-top:10px"><button class="btn ok" style="flex:1" onclick="A.nurSet(\'' + o.id + '\',\'collected\')">Collected</button></div>';
+    return h + '</div>';
+  }
+
+  async function farmerScreen() {
+    const orders = await listOrders('buyer');
+    let h = '<div class="note">Enter a nursery’s code when you record a seedling order and it comes straight to them - they mark it ready and you get told here. Ask your nursery for their code.</div>';
+    h += '<button class="btn pri wide" onclick="A.nurOrder()">+ Order with a nursery code</button>';
+    if (orders.length) { h += '<h2>My online orders</h2>' + orders.map(o => { const st = SOST[o.status] || o.status, cls = SOCLS[o.status] || ''; return '<div class="card"><div class="row"><div class="em">' + cropEm(o.crop) + '</div><div class="grow"><div class="t">' + (o.qty ? plural(num(o.qty), 'seedling') + ' · ' : '') + esc(crop(o.crop).n || o.crop || 'Seedlings') + '</div><div class="s">' + (o.note ? esc(o.note) + ' · ' : '') + new Date(o.created_at).toLocaleDateString('en-KE') + '</div></div><span class="pill ' + cls + '">' + st + '</span></div></div>'; }).join(''); }
+    else h += '<div class="card s" style="margin-top:12px">No online orders yet.</div>';
+    sheetReplace('Nursery link', h);
+  }
+
+  function orderForm() {
+    if (sheetStack.length) closeSheet();
+    form('Order with a nursery code', [
+      { k: 'code', l: 'Nursery code', v: '', ph: 'e.g. 4KQ7P9', req: 1 },
+      { k: 'crop', l: 'Crop', t: 'select', o: cropOpts(false, (prof().crops || [])[0] || 'tomato'), v: (prof().crops || [])[0] || 'tomato' },
+      { k: 'variety', l: 'Variety', v: '' },
+      { k: 'qty', l: 'Number of seedlings', t: 'num', v: '', req: 1 },
+      { k: 'notes', l: 'Note for the nursery', t: 'area', v: '' }
+    ], async r => {
+      const res = await placeOnline(r.code, { crop: r.crop, qty: r.qty, variety: r.variety, notes: r.notes });
+      if (res) {
+        // also keep it in the farmer's offline "Seedlings I ordered" list, linked
+        try { await save('sorders', { id: uid(), crop: r.crop, variety: r.variety, qty: r.qty, nursery: res.nursery || 'Nursery', ready: addD(today(), crop(r.crop).nursery || 30), status: 'waiting', online: res.online }); } catch (e) {}
+      }
+    });
+  }
+
+  // small helper: replace the current sheet's content in place
+  function sheetReplace(title, html) {
+    try {
+      const ov = sheetStack[sheetStack.length - 1]; if (!ov) { sheet(title, html, { noFocus: true }); return; }
+      const body = ov.querySelector('.sb');
+      if (body) { body.innerHTML = html; if (typeof LANG !== 'undefined' && LANG !== 'en') { try { translateDOM(ov); } catch (e) {} } }
+      else { closeSheet(); sheet(title, html, { noFocus: true }); }
+    } catch (e) { sheet(title, html, { noFocus: true }); }
+  }
+
+  // --- actions on the A namespace ---
+  const api = {
+    nursery: nurseryScreen,
+    nurOrder: orderForm,
+    nurPlace: placeOnline,
+    async nurSet(id, status) {
+      const patch = { status }; if (status === 'ready') patch.ready_at = new Date().toISOString();
+      try { await patchOrder(id, patch); toast(status === 'ready' ? 'Marked ready - the farmer will be told' : status === 'collected' ? 'Marked collected' : status === 'accepted' ? 'Order accepted' : 'Updated'); if (isProp()) propScreen(); } catch (e) { toast('Could not update - check internet'); }
+    },
+    nurShare(code) { const msg = 'Order seedlings from my nursery in the Farm on the Go app: open “Seedlings I ordered”, tap “Order with a nursery code”, and enter code ' + code + '. ' + (prof().farm || prof().name || ''); try { window.open(waLink('', msg), '_blank'); } catch (e) {} },
+    nurCopy(code) { try { navigator.clipboard.writeText(code); toast('Code copied'); } catch (e) { toast(code); } }
+  };
+  try { Object.assign(window.A, api); } catch (e) {}
+  try { if (!window.NUR) window.NUR = {}; Object.assign(window.NUR, { checkOnOpen, placeOnline, resolveCode, myCode }); } catch (e) {}
+
+  // --- run the on-open check after sign-in + sync, and when the app returns to the foreground ---
+  let ran = false, tries = 0;
+  const iv = setInterval(function () {
+    tries++;
+    if (ran) { clearInterval(iv); return; }
+    if (sess() && navigator.onLine && typeof D !== 'undefined' && D.sorders) { ran = true; clearInterval(iv); setTimeout(checkOnOpen, 1500); }
+    else if (tries > 120) clearInterval(iv);
+  }, 1000);
+  try {
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState !== 'visible' || !sess() || !navigator.onLine) return;
+      const now = Date.now(); if (now - (window.__nurLast || 0) < 60000) return; window.__nurLast = now; setTimeout(checkOnOpen, 800);
+    });
+  } catch (e) {}
+  // re-check right after a successful sync (new ready-marks arrive through sync)
+  try { if (typeof syncNow === 'function') { const _s = syncNow; syncNow = async function () { const r = await _s.apply(this, arguments); try { if (sess() && navigator.onLine) setTimeout(checkOnOpen, 500); } catch (e) {} return r; }; } } catch (e) {}
 })();
