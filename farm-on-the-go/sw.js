@@ -2,7 +2,7 @@
 // Keeps the app's own files so it opens with no internet. Records live in IndexedDB and are not touched here.
 // Only this app's caches are ever removed - the other DukaGO apps on the same address keep theirs.
 const CACHE_PREFIX = 'farm-on-the-go-shell-';
-const CACHE_NAME = CACHE_PREFIX + 'v1-2026-11-11-2';
+const CACHE_NAME = CACHE_PREFIX + 'v1-2026-11-12-1';
 const SHELL_FILES = ['./', './index.html', './app.js', './crops.js', './manifest.json', './icons/icon-192-f1.png', './icons/icon-512-f1.png'];
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(SHELL_FILES.map((u) => new Request(u, { cache: 'reload' })))));

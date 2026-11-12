@@ -2,7 +2,7 @@
    Everything is kept on this phone (IndexedDB 'farm_on_the_go_v1'), so it works with no internet at all. It shares
    nothing with the other DukaGO apps: its own database, its own offline cache and its own settings. */
 'use strict';
-const BUILD = '2026-11-11-2';
+const BUILD = '2026-11-12-1';
 const L = window.FARM_LIB;
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -391,7 +391,7 @@ function rankProblems(cid, sel) {
   if (!sel.length) return [];
   return (crop(cid).problems || []).map(id => { const p = L.PROBLEMS[id], hit = p.s.filter(s => sel.includes(s)).length; if (!hit) return null; const score = 0.6 * hit / sel.length + 0.4 * hit / p.s.length; return { id, p, hit, score, label: score >= .7 ? 'strong match' : score >= .45 ? 'possible' : 'weak match' }; }).filter(Boolean).sort((a, b) => b.score - a.score || b.hit - a.hit);
 }
-const aiReady = () => !!(K.server && K.server.url);
+const aiReady = () => { try { return !!sess(); } catch (e) { return false; } };
 function aiResultHtml(r) {
   if (r.error) return '<div class="note bad">AI check: ' + esc(r.error) + '</div>';
   return '<div class="card" style="border-color:var(--purple)"><div class="row"><div class="em">✨</div><div class="grow"><div class="t">AI: ' + esc(r.name || 'Not sure') + '</div><div class="s">' + esc(r.kind || '') + (r.confidence ? ' · ' + esc(r.confidence) + ' confidence' : '') + '</div></div></div>' + (r.signs ? '<div class="s" style="margin-top:8px">' + esc(r.signs) + '</div>' : '') + (r.actions && r.actions.length ? '<ul class="tight s">' + r.actions.map(a => '<li>' + esc(a) + '</li>').join('') + '</ul>' : '') + (r.sprays ? '<div class="s"><b>Sprays:</b> ' + esc(r.sprays) + '</div>' : '') + (r.note ? '<div class="xs" style="margin-top:6px">' + esc(r.note) + '</div>' : '') + '</div>';
@@ -1153,9 +1153,11 @@ const A = window.A = {
   async dxDel(id) { if (await ask('Delete this check?', 'Delete', 'Keep', true)) { await remove('dx', id); render(); } },
   async dxAI() {
     if (!navigator.onLine) { toast('No internet - the AI check needs a connection. Save the check and try later.'); return; }
+    if (!DX.photo) { toast('Take a photo first'); return; }
+    const tok = await freshToken(); if (!tok) { toast('Sign in (More tab) to use the AI photo check'); return; }
     DX.busy = true; render();
     try {
-      const sv = K.server, r = await fetch(sv.url.replace(/\/+$/, '') + '/functions/v1/plant-doctor', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: sv.key || '', Authorization: 'Bearer ' + (sv.key || '') }, body: JSON.stringify({ crop: crop(DX.crop).n, symptoms: DX.sym.map(s => L.SYMPTOMS[s]), image: DX.photo.split(',')[1] }) });
+      const r = await fetch(SB_URL + '/functions/v1/plant-doctor', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SB_KEY, Authorization: 'Bearer ' + tok }, body: JSON.stringify({ crop: crop(DX.crop).n, symptoms: DX.sym.map(s => L.SYMPTOMS[s]), image: DX.photo.split(',')[1] }) });
       const j = await r.json().catch(() => ({})); DX.ai = r.ok ? j : { error: j.error || 'The plant doctor could not be reached (' + r.status + ')' };
     } catch (e) { DX.ai = { error: 'The plant doctor could not be reached - check the internet and try again' }; }
     DX.busy = false; render();
