@@ -91,11 +91,21 @@ async function load(key){
 function render(){
   const d=DATA;
   $('cards').innerHTML=[
-    ['Total',d.total],['Last 7 days',d.last7],['Farm',d.byApp.farm||0],['POS',d.byApp.pos||0],['Clinic',d.byApp.clinic||0]
+    ['Total',d.total],['Last 7 days',d.last7],['Precise (GPS)',d.gps||0],['Farm',d.byApp.farm||0],['POS',d.byApp.pos||0],['Clinic',d.byApp.clinic||0]
   ].map(([k,v])=>`<div class="c"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
   const max=Math.max(1,...d.days.map(x=>x.n));
   $('bars').innerHTML=d.days.map(x=>`<div class="barwrap" title="${x.d}: ${x.n}"><div class="bar" style="height:${Math.round(x.n/max*100)}%"></div><div class="barlbl">${x.d.slice(5)}</div></div>`).join('')||'<div class="muted">No data yet</div>';
   table();
+}
+function locCell(r){
+  const place=esc([r.city,r.region,r.country].filter(Boolean).join(', '));
+  const hasCoord=r.latitude!=null&&r.longitude!=null;
+  if(!place&&!hasCoord) return '<span class="muted">—</span>';
+  const gps=r.loc_source==='gps';
+  const badge=`<span style="display:inline-block;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:600;margin-left:4px;${gps?'background:rgba(91,191,114,.18);color:#5bbf72':'background:rgba(169,184,176,.15);color:#a9b8b0'}">${gps?'GPS':'approx'}</span>`;
+  const map=hasCoord?` <a href="https://maps.google.com/?q=${r.latitude},${r.longitude}" target="_blank" rel="noopener" style="color:#5aa9e6;font-size:11px">map ↗</a>`:'';
+  const isp=(r.isp&&!gps)?`<div style="font-size:11px;opacity:.55">${esc(r.isp)}</div>`:'';
+  return `<div>${place||'<span class="muted">pinned</span>'}${badge}${map}</div>${isp}`;
 }
 function table(){
   const q=($('q').value||'').toLowerCase(), fa=$('fapp').value;
@@ -105,7 +115,7 @@ function table(){
     <td><span class="tag t-${r.app}">${names[r.app]||r.app}</span></td>
     <td class="ev">${r.event==='installed'?'installed':'first open'}</td>
     <td>${esc(r.account)||'<span class="muted">—</span>'}</td>
-    <td>${esc([r.city,r.country].filter(Boolean).join(', '))||'<span class="muted">—</span>'}</td>
+    <td>${locCell(r)}</td>
     <td title="${esc(r.created_at)}">${when(r.created_at)}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">No matching records</td></tr>';
 }
 async function enter(key){
