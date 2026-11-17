@@ -2,7 +2,7 @@
    Everything is kept on this phone (IndexedDB 'farm_on_the_go_v1'), so it works with no internet at all. It shares
    nothing with the other DukaGO apps: its own database, its own offline cache and its own settings. */
 'use strict';
-const BUILD = '2026-11-17-1';
+const BUILD = '2026-11-17-2';
 const L = window.FARM_LIB;
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1901,3 +1901,7 @@ try { Object.assign(window.A, { language: langSheet, setLang }); } catch (e) {}
   // re-check right after a successful sync (new ready-marks arrive through sync)
   try { if (typeof syncNow === 'function') { const _s = syncNow; syncNow = async function () { const r = await _s.apply(this, arguments); try { if (sess() && navigator.onLine) setTimeout(checkOnOpen, 500); } catch (e) {} return r; }; } } catch (e) {}
 })();
+
+/* Privacy cover: blank the screen when the app is backgrounded so figures/PIN don't
+   show in the phone's recents preview. Web apps can't block deliberate screenshots. */
+(function(){if(window.__privacyCover)return;window.__privacyCover=true;var c=document.createElement('div');c.id='privacyCover';c.setAttribute('aria-hidden','true');c.style.cssText='position:fixed;inset:0;z-index:2147483647;display:none;align-items:center;justify-content:center;flex-direction:column;gap:14px;background:#0e1512;color:#eef5f1;font:600 15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center;padding:24px';c.innerHTML='<div style="font-size:40px">\u{1F512}</div><div>Protected</div><div style="font-size:12px;opacity:.6;max-width:260px">Screen hidden while the app is in the background</div>';function mount(){if(!c.isConnected&&document.body)document.body.appendChild(c);}function show(){mount();c.style.display='flex';}function hide(){c.style.display='none';}document.addEventListener('visibilitychange',function(){document.hidden?show():hide();});window.addEventListener('pagehide',show);window.addEventListener('pageshow',hide);if(document.body)mount();else document.addEventListener('DOMContentLoaded',mount);})();
