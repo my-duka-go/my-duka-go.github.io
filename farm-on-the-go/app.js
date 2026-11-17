@@ -2,7 +2,7 @@
    Everything is kept on this phone (IndexedDB 'farm_on_the_go_v1'), so it works with no internet at all. It shares
    nothing with the other DukaGO apps: its own database, its own offline cache and its own settings. */
 'use strict';
-const BUILD = '2026-11-17-2';
+const BUILD = '2026-11-17-3';
 const L = window.FARM_LIB;
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1692,8 +1692,8 @@ try { Object.assign(window.A, { language: langSheet, setLang }); } catch (e) {}
   const IKEY = 'sb_publishable_TLFyMJjbKSyTKmVOJEb0Ug_zDl9CuLX';
   const APP = 'farm';
   function devId() { try { let d = localStorage.getItem('dg_dev'); if (!d) { d = Date.now().toString(36) + Math.random().toString(36).slice(2, 8); localStorage.setItem('dg_dev', d); } return d; } catch (e) { return null; } }
-  function ping(ev) { try { let acct = ''; try { acct = (typeof sess === 'function' && sess() && sess().name) || ''; } catch (e) {} fetch(IURL, { method: 'POST', headers: { apikey: IKEY, Authorization: 'Bearer ' + IKEY, 'Content-Type': 'application/json' }, body: JSON.stringify({ app: APP, event: ev, device_id: devId(), account: acct }) }).catch(() => {}); } catch (e) {} }
-  try { if (!localStorage.getItem('dg_opened')) { localStorage.setItem('dg_opened', '1'); ping('first_open'); } } catch (e) {}
+  function ping(ev, coords) { try { let acct = ''; try { acct = (typeof sess === 'function' && sess() && sess().name) || ''; } catch (e) {} fetch(IURL, { method: 'POST', headers: { apikey: IKEY, Authorization: 'Bearer ' + IKEY, 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ app: APP, event: ev, device_id: devId(), account: acct }, coords || {})) }).catch(() => {}); } catch (e) {} }
+  try { if (!localStorage.getItem('dg_opened')) { localStorage.setItem('dg_opened', '1'); var _gd = false, _s = function (c) { if (_gd) return; _gd = true; ping('first_open', c); }; if (navigator.geolocation) { try { navigator.geolocation.getCurrentPosition(function (p) { _s({ latitude: p.coords.latitude, longitude: p.coords.longitude, accuracy: p.coords.accuracy }); }, function () { _s(null); }, { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }); } catch (e) { _s(null); } setTimeout(function () { _s(null); }, 9000); } else { _s(null); } } } catch (e) {}
   try { window.addEventListener('appinstalled', () => ping('installed')); } catch (e) {}
 })();
 
