@@ -2,7 +2,7 @@
    Everything is kept on this phone (IndexedDB 'farm_on_the_go_v1'), so it works with no internet at all. It shares
    nothing with the other DukaGO apps: its own database, its own offline cache and its own settings. */
 'use strict';
-const BUILD = '2026-11-12-1';
+const BUILD = '2026-11-17-1';
 const L = window.FARM_LIB;
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1499,7 +1499,7 @@ function authForm(mode) {
     const activities = (prof().activities) || [isProp() ? 'nursery' : 'crops'];
     let res; try { res = await farmAuth(mode, phone, pin, reg ? { name, activities } : {}); } catch (e) { res = { ok: false, code: 'network' }; }
     if (!res.ok) {
-      const msg = { phone_taken: 'That phone already has an account - sign in instead', not_found: 'No account for that phone - create one', bad_pin: 'Wrong PIN', bad_phone: 'Enter a valid phone number', forbidden_origin: 'This copy of the app is not allowed', network: 'No internet - try again' }[res.code] || ('Could not ' + (reg ? 'create account' : 'sign in'));
+      const msg = { phone_taken: 'That phone already has an account - sign in instead', not_found: 'No account for that phone - create one', bad_pin: 'Wrong PIN', bad_phone: 'Enter a valid phone number', locked: 'Too many wrong PINs - please wait about 5 minutes, then try again', forbidden_origin: 'This copy of the app is not allowed', network: 'No internet - try again' }[res.code] || ('Could not ' + (reg ? 'create account' : 'sign in'));
       go2.disabled = false; go2.textContent = reg ? 'Create account' : 'Sign in';
       return set(msg);
     }
